@@ -1,0 +1,29 @@
+[project]
+name = "clip-avc"
+version = "0.1.0"
+description = "Reproduction of CLIP-AVC (Tu & Aikyn, IEEE GRSL 2025) for aerial video classification."
+readme = "README.md"
+authors = [
+    { name = "galymzhantore", email = "galymzhantore17@gmail.com" }
+]
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "clip",
+    "einops>=0.8.2",
+    # Real decord on Linux (production: RTX 5090); eva-decord shim on macOS for dev only.
+    "decord>=0.6.0 ; sys_platform == 'linux'",
+    "eva-decord>=0.6.1 ; sys_platform == 'darwin'",
+    "ftfy>=6.3.1",
+    "numpy>=2.2.6",
+    "regex>=2026.5.9",
+    "torch>=2.12.0",
+    "torchvision>=0.27.0",
+    "tqdm>=4.67.3",
+    "transformers>=5.8.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+clip = { git = "https://github.com/openai/CLIP.git" }

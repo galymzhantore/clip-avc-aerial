@@ -15,4 +15,11 @@ papers/
 .claude
 .devcontainer
 .agents
-
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
