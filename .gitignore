@@ -11,4 +11,8 @@ __pycache__/
 .idea/
 .vscode/
 
+papers/
+.claude
+.devcontainer
+.agents
 
