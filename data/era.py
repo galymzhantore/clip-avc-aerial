@@ -39,16 +39,22 @@ def era_dataset(
     root: str | Path,
     split: str = "train",
     n_frames: int = 16,
+    clip_frames: int | None = None,
+    swin_frames: int | None = None,
     image_size: int = 224,
     random_crop: bool = True,
     horizontal_flip: bool = True,
+    color_jitter: bool = True,
 ) -> VideoClipDataset:
     return VideoClipDataset(
         root=root,
         classes=ERA_CLASSES,
         split=split,
         n_frames=n_frames,
+        clip_frames=clip_frames,
+        swin_frames=swin_frames,
         image_size=image_size,
         random_crop=random_crop,
         horizontal_flip=horizontal_flip,
+        color_jitter=color_jitter,
     )

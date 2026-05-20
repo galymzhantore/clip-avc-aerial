@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 from torchvision.models.video import Swin3D_B_Weights, swin3d_b
 
 
@@ -18,6 +19,7 @@ class VideoSwinEncoder(nn.Module):
         embed_dim: int = 512,
         pretrained: bool = True,
         weights: str = "KINETICS400_V1",
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         if pretrained:
@@ -31,8 +33,9 @@ class VideoSwinEncoder(nn.Module):
         self.norm = backbone.norm
         self.out_channels: int = backbone.num_features  # 1024 for Swin-B
         self.projection = nn.Linear(self.out_channels, embed_dim)
+        self.gradient_checkpointing = gradient_checkpointing
 
-    def forward(self, clip: torch.Tensor) -> torch.Tensor:
+    def _forward_impl(self, clip: torch.Tensor) -> torch.Tensor:
         # clip: (B, C, T_f, H, W)
         h = self.patch_embed(clip)
         h = self.pos_drop(h)
@@ -42,3 +45,8 @@ class VideoSwinEncoder(nn.Module):
         h = h.reshape(b, t * hh * ww, c)  # (B, T'*H'*W', C_s)
         h = self.projection(h)            # (B, T'*H'*W', D)
         return h
+
+    def forward(self, clip: torch.Tensor) -> torch.Tensor:
+        if self.gradient_checkpointing and self.training:
+            return checkpoint(self._forward_impl, clip, use_reentrant=False)
+        return self._forward_impl(clip)

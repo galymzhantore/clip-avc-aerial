@@ -28,9 +28,20 @@ class CLIP_AVC_Config:
     clip_model: str = "ViT-B/32"
     bert_model: str = "bert-base-uncased"
     swin_weights: str | None = "KINETICS400_V1"  # set to None to skip pretrained download
-    n_frames: int = 16
+    clip_frames: int = 8
+    swin_frames: int = 16
+    n_frames: int | None = field(default=None, repr=False)
     max_text_tokens: int = 32
     init_logit_scale: float = math.log(1.0 / 0.07)  # CLIP default
+    use_cross_transformer: bool = True
+    use_context_transformer: bool = True
+    checkpoint_video_swin: bool = False
+
+    def __post_init__(self):
+        # Backward compatibility for old checkpoints/config dicts saved with n_frames.
+        if self.n_frames is not None:
+            self.clip_frames = self.n_frames
+            self.swin_frames = self.n_frames
 
 
 class CLIP_AVC_Outputs(NamedTuple):
@@ -53,13 +64,14 @@ class CLIP_AVC(nn.Module):
             embed_dim=cfg.embed_dim,
             pretrained=cfg.swin_weights is not None,
             weights=cfg.swin_weights or "KINETICS400_V1",
+            gradient_checkpointing=cfg.checkpoint_video_swin,
         )
 
         self.temporal = TemporalTransformer(
             d_model=cfg.embed_dim,
             n_layers=cfg.temporal_layers,
             n_heads=cfg.n_heads,
-            max_frames=max(cfg.n_frames, 32),
+            max_frames=max(cfg.clip_frames, 32),
             dropout=cfg.dropout,
         )
         self.cross = CrossTransformer(
@@ -72,7 +84,7 @@ class CLIP_AVC(nn.Module):
             d_model=cfg.embed_dim,
             n_layers=cfg.context_layers,
             n_heads=cfg.n_heads,
-            max_tokens=cfg.n_frames + cfg.max_text_tokens,
+            max_tokens=cfg.clip_frames + cfg.max_text_tokens,
             dropout=cfg.dropout,
         )
         self.logit_scale = nn.Parameter(torch.tensor(cfg.init_logit_scale))
@@ -85,8 +97,11 @@ class CLIP_AVC(nn.Module):
         """
         u = self.clip_vit(frames)        # (B, T, D)
         u_tilde = self.temporal(u)       # (B, T, D)
-        w = self.video_swin(clip_video)  # (B, T'*H'*W', D)
-        v = self.cross(u_tilde, w)       # (B, T, D)
+        if self.config.use_cross_transformer:
+            w = self.video_swin(clip_video)  # (B, T'*H'*W', D)
+            v = self.cross(u_tilde, w)       # (B, T, D)
+        else:
+            v = u_tilde
         return v, u_tilde
 
     def encode_text(
@@ -112,7 +127,10 @@ class CLIP_AVC(nn.Module):
         v_bar = v.mean(dim=1)        # coarse visual
         s_eos = text.eos             # coarse text ([SEP]/EOS)
 
-        v_seq, s_seq = self.context(v, text.tokens, text_attention_mask=text.attention_mask)
+        if self.config.use_context_transformer:
+            v_seq, s_seq = self.context(v, text.tokens, text_attention_mask=text.attention_mask)
+        else:
+            v_seq, s_seq = v, text.tokens
         v_hat = v_seq.mean(dim=1)    # refined visual
 
         # Refined text: mean over real (non-pad) text tokens.
@@ -128,10 +146,17 @@ class CLIP_AVC(nn.Module):
         )
 
     # ------------------------------------------------------------------ losses
-    def compute_losses(self, out: CLIP_AVC_Outputs, lam: float = 1.0) -> dict[str, torch.Tensor]:
+    def compute_losses(
+        self,
+        out: CLIP_AVC_Outputs,
+        lam: float = 1.0,
+        use_lc: bool = True,
+        use_lr: bool = True,
+    ) -> dict[str, torch.Tensor]:
         scale = out.logit_scale.clamp(max=100.0)
-        l_c = bidirectional_info_nce(out.v_bar, out.s_eos, scale)
-        l_r = bidirectional_info_nce(out.v_hat, out.s_hat, scale)
+        zero = out.v_bar.new_zeros(())
+        l_c = bidirectional_info_nce(out.v_bar, out.s_eos, scale) if use_lc else zero
+        l_r = bidirectional_info_nce(out.v_hat, out.s_hat, scale) if use_lr else zero
         return {"loss": l_r + lam * l_c, "L_r": l_r, "L_c": l_c}
 
     # ------------------------------------------------------------------ inference
@@ -150,7 +175,7 @@ class CLIP_AVC(nn.Module):
         """
         text = self.encode_text(input_ids, attention_mask, token_type_ids)
         b = input_ids.size(0)
-        zero_v = torch.zeros(b, self.config.n_frames, self.config.embed_dim, device=input_ids.device)
+        zero_v = torch.zeros(b, self.config.clip_frames, self.config.embed_dim, device=input_ids.device)
         _, s_seq = self.context(zero_v, text.tokens, text_attention_mask=text.attention_mask)
         mask = text.attention_mask.unsqueeze(-1).type_as(s_seq)
         return (s_seq * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)

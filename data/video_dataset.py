@@ -12,9 +12,11 @@ Expected folder layout (the user arranges these):
         test/
             class_name_1/...
 
-Each video is uniformly sub-sampled to ``n_frames`` frames, resized to ``image_size``,
-and returned twice: once normalised with CLIP mean/std for the ViT path, once with
-Kinetics (ImageNet-style) mean/std for the Video Swin path.
+Each video is uniformly sub-sampled for both visual paths, resized to
+``image_size``, and returned twice: once normalised with CLIP mean/std for the
+ViT path, once with the Kinetics-400 Video Swin mean/std for the Video Swin path.
+The paper samples 8 frames for the CLIP/2-D path and 16 frames for the Video
+Swin/3-D path.
 """
 from __future__ import annotations
 
@@ -30,8 +32,10 @@ from torch.utils.data import Dataset
 from models.clip_encoder import CLIPViTEncoder
 
 CLIP_MEAN, CLIP_STD = CLIPViTEncoder.normalize_mean_std()
-SWIN_MEAN = (0.485, 0.456, 0.406)
-SWIN_STD = (0.229, 0.224, 0.225)
+# Torchvision's Kinetics-400 Video Swin weights are trained with this video
+# normalization, not ImageNet still-image normalization.
+SWIN_MEAN = (0.43216, 0.394666, 0.37645)
+SWIN_STD = (0.22803, 0.22145, 0.216989)
 
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
@@ -63,17 +67,22 @@ class VideoClipDataset(Dataset):
         classes: Sequence[str],
         split: str = "train",
         n_frames: int = 16,
+        clip_frames: int | None = None,
+        swin_frames: int | None = None,
         image_size: int = 224,
         random_crop: bool = True,
         horizontal_flip: bool = True,
+        color_jitter: bool = True,
     ):
         self.root = Path(root) / split
         self.classes = list(classes)
         self.split = split
-        self.n_frames = n_frames
+        self.clip_frames = clip_frames if clip_frames is not None else n_frames
+        self.swin_frames = swin_frames if swin_frames is not None else n_frames
         self.image_size = image_size
         self.random_crop = random_crop and split == "train"
         self.horizontal_flip = horizontal_flip and split == "train"
+        self.color_jitter = color_jitter and split == "train"
         self.samples = _scan_split(self.root, self.classes)
         if not self.samples:
             raise FileNotFoundError(
@@ -81,17 +90,44 @@ class VideoClipDataset(Dataset):
             )
 
     # ------------------------------------------------------------------ frame ops
-    def _read_frames(self, path: Path) -> np.ndarray:
+    @staticmethod
+    def _sample_indices(total: int, n_frames: int) -> np.ndarray:
+        if total >= n_frames:
+            return np.linspace(0, total - 1, n_frames).astype(np.int64)
+        return np.concatenate(
+            [np.arange(total), np.full(n_frames - total, total - 1, dtype=np.int64)]
+        )
+
+    def _read_frames(self, path: Path, n_frames: int) -> np.ndarray:
         vr = VideoReader(str(path), ctx=cpu(0))
         total = len(vr)
-        if total >= self.n_frames:
-            idxs = np.linspace(0, total - 1, self.n_frames).astype(np.int64)
-        else:
-            idxs = np.concatenate(
-                [np.arange(total), np.full(self.n_frames - total, total - 1, dtype=np.int64)]
-            )
+        idxs = self._sample_indices(total, n_frames)
         frames = vr.get_batch(list(idxs)).asnumpy()  # (T, H, W, 3) uint8 RGB
         return frames
+
+    @staticmethod
+    def _adjust_saturation(x: torch.Tensor, factor: float) -> torch.Tensor:
+        # Rec. 601 luma coefficients, matching the usual PIL-style grayscale mix.
+        gray = (0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3])
+        return gray + factor * (x - gray)
+
+    def _color_jitter(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.color_jitter:
+            return x
+        brightness = float(torch.empty(1).uniform_(0.8, 1.2).item())
+        contrast = float(torch.empty(1).uniform_(0.8, 1.2).item())
+        saturation = float(torch.empty(1).uniform_(0.8, 1.2).item())
+
+        ops = torch.randperm(3).tolist()
+        for op in ops:
+            if op == 0:
+                x = x * brightness
+            elif op == 1:
+                mean = x.mean(dim=(1, 2, 3), keepdim=True)
+                x = mean + contrast * (x - mean)
+            else:
+                x = self._adjust_saturation(x, saturation)
+        return x.clamp_(0.0, 1.0)
 
     def _augment(self, frames: np.ndarray) -> np.ndarray:
         # frames: (T, H, W, 3) uint8
@@ -110,6 +146,7 @@ class VideoClipDataset(Dataset):
         x = x[:, :, top : top + self.image_size, left : left + self.image_size]
         if self.horizontal_flip and torch.rand(1).item() < 0.5:
             x = torch.flip(x, dims=[-1])
+        x = self._color_jitter(x)
         return x  # (T, 3, H, W) float in [0,1]
 
     @staticmethod
@@ -123,11 +160,15 @@ class VideoClipDataset(Dataset):
 
     def __getitem__(self, idx: int):
         sample = self.samples[idx]
-        frames = self._read_frames(sample.path)
-        x = self._augment(frames)                      # (T, 3, H, W)
-        clip_frames = self._normalize(x, CLIP_MEAN, CLIP_STD)         # (T, 3, H, W)
-        swin_video = self._normalize(x, SWIN_MEAN, SWIN_STD)          # (T, 3, H, W)
-        swin_video = swin_video.permute(1, 0, 2, 3).contiguous()      # (3, T, H, W)
+        clip_raw = self._read_frames(sample.path, self.clip_frames)
+        swin_raw = self._read_frames(sample.path, self.swin_frames)
+        frames = np.concatenate([clip_raw, swin_raw], axis=0)
+        x = self._augment(frames)  # (T_clip + T_swin, 3, H, W)
+        clip_x = x[: self.clip_frames]
+        swin_x = x[self.clip_frames :]
+        clip_frames = self._normalize(clip_x, CLIP_MEAN, CLIP_STD)    # (T_clip, 3, H, W)
+        swin_video = self._normalize(swin_x, SWIN_MEAN, SWIN_STD)     # (T_swin, 3, H, W)
+        swin_video = swin_video.permute(1, 0, 2, 3).contiguous()      # (3, T_swin, H, W)
         return {
             "clip_frames": clip_frames,
             "swin_video": swin_video,

@@ -15,25 +15,31 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--image-size", type=int, default=224)
+    parser.add_argument("--clip-frames", type=int, default=8)
+    parser.add_argument("--swin-frames", type=int, default=16)
     parser.add_argument("--no-swin-pretrained", action="store_true",
                         help="Skip Kinetics-400 weight download (random init).")
     args = parser.parse_args()
 
-    cfg = CLIP_AVC_Config(swin_weights=None if args.no_swin_pretrained else "KINETICS400_V1")
+    cfg = CLIP_AVC_Config(
+        clip_frames=args.clip_frames,
+        swin_frames=args.swin_frames,
+        swin_weights=None if args.no_swin_pretrained else "KINETICS400_V1",
+    )
     device = torch.device("cuda")
     model = CLIP_AVC(cfg).to(device)
     model.eval()
 
-    b, t, s = args.batch, cfg.n_frames, args.image_size
-    frames = torch.randn(b, t, 3, s, s, device=device)
-    swin_video = torch.randn(b, 3, t, s, s, device=device)
+    b, s = args.batch, args.image_size
+    frames = torch.randn(b, cfg.clip_frames, 3, s, s, device=device)
+    swin_video = torch.randn(b, 3, cfg.swin_frames, s, s, device=device)
     prompts = (["a photo of harvesting", "a photo of swimming"] * b)[:b]
     toks = model.bert.tokenize(prompts, max_length=cfg.max_text_tokens)
     toks = {k: v.to(device) for k, v in toks.items()}
 
     print("--- inputs ---")
-    print(f"clip frames : {tuple(frames.shape)}  (B, T, 3, H, W)")
-    print(f"swin video  : {tuple(swin_video.shape)}  (B, 3, T_f, H, W)")
+    print(f"clip frames : {tuple(frames.shape)}  (B, T_clip, 3, H, W)")
+    print(f"swin video  : {tuple(swin_video.shape)}  (B, 3, T_swin, H, W)")
     print(f"input_ids   : {tuple(toks['input_ids'].shape)}")
 
     with torch.no_grad():

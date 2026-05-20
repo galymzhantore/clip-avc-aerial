@@ -25,6 +25,13 @@ class BERTTextEncoder(nn.Module):
 
         for p in self.bert.parameters():
             p.requires_grad = False
+        self.bert.eval()
+
+    def train(self, mode: bool = True):
+        # Keep frozen BERT deterministic while leaving the projection trainable.
+        super().train(mode)
+        self.bert.eval()
+        return self
 
     def tokenize(self, prompts: list[str], max_length: int = 32) -> dict[str, torch.Tensor]:
         return self.tokenizer(
