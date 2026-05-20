@@ -120,6 +120,8 @@ def main() -> None:
     p.add_argument("--frames", type=int, default=None, help="Backward-compatible alias that sets both paths.")
     p.add_argument("--clip-frames", type=int, default=None, help="Paper default: 8.")
     p.add_argument("--swin-frames", type=int, default=None, help="Paper default: 16.")
+    p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
+    p.add_argument("--max-text-tokens", type=int, default=77)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=Path("checkpoints"))
     p.add_argument("--scheduler", choices=["step", "cosine", "none"], default="step")
@@ -146,6 +148,8 @@ def main() -> None:
         use_cross_transformer=args.cross_transformer,
         use_context_transformer=args.context_transformer,
         checkpoint_video_swin=args.checkpoint_video_swin,
+        text_encoder=args.text_encoder,
+        max_text_tokens=args.max_text_tokens,
     )
     model = CLIP_AVC(cfg).to(device)
 
@@ -188,6 +192,8 @@ def main() -> None:
             "data_root": str(args.data_root),
             "clip_frames": clip_frames,
             "swin_frames": swin_frames,
+            "text_encoder": args.text_encoder,
+            "max_text_tokens": args.max_text_tokens,
             "batch_size": args.batch_size,
             "micro_batch_size": args.micro_batch_size or args.batch_size,
             "lr": args.lr,

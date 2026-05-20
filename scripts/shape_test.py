@@ -17,6 +17,8 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--clip-frames", type=int, default=8)
     parser.add_argument("--swin-frames", type=int, default=16)
+    parser.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
+    parser.add_argument("--max-text-tokens", type=int, default=77)
     parser.add_argument("--no-swin-pretrained", action="store_true",
                         help="Skip Kinetics-400 weight download (random init).")
     args = parser.parse_args()
@@ -25,6 +27,8 @@ def main() -> None:
         clip_frames=args.clip_frames,
         swin_frames=args.swin_frames,
         swin_weights=None if args.no_swin_pretrained else "KINETICS400_V1",
+        text_encoder=args.text_encoder,
+        max_text_tokens=args.max_text_tokens,
     )
     device = torch.device("cuda")
     model = CLIP_AVC(cfg).to(device)
@@ -63,7 +67,7 @@ def main() -> None:
     print(f"U_tilde (Temporal x{cfg.temporal_layers})    : {tuple(u_tilde.shape)}")
     print(f"W (Swin Stage-4 tokens)   : {tuple(w_grid.shape)}")
     print(f"V (Cross x{cfg.cross_layers})            : {tuple(v.shape)}")
-    print(f"S (BERT tokens)           : {tuple(text.tokens.shape)}")
+    print(f"S ({cfg.text_encoder} tokens)           : {tuple(text.tokens.shape)}")
     print(f"Context-Enriched visual   : {tuple(v_seq.shape)}")
     print(f"Context-Enriched text     : {tuple(s_seq.shape)}")
     print("--- outputs ---")

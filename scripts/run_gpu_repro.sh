@@ -19,6 +19,8 @@ LR="${LR:-5e-6}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-0.2}"
 CLIP_FRAMES="${CLIP_FRAMES:-8}"
 SWIN_FRAMES="${SWIN_FRAMES:-16}"
+TEXT_ENCODER="${TEXT_ENCODER:-clip}"
+MAX_TEXT_TOKENS="${MAX_TEXT_TOKENS:-77}"
 CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
@@ -40,6 +42,8 @@ common_train_args=(
   --weight-decay "$WEIGHT_DECAY"
   --clip-frames "$CLIP_FRAMES"
   --swin-frames "$SWIN_FRAMES"
+  --text-encoder "$TEXT_ENCODER"
+  --max-text-tokens "$MAX_TEXT_TOKENS"
   --scheduler step
   --lr-step-epochs 15
   --lr-gamma 0.1
@@ -61,6 +65,8 @@ shape_test() {
     --batch 1 \
     --clip-frames "$CLIP_FRAMES" \
     --swin-frames "$SWIN_FRAMES" \
+    --text-encoder "$TEXT_ENCODER" \
+    --max-text-tokens "$MAX_TEXT_TOKENS" \
     2>&1 | tee "$LOG_DIR/shape_test.log"
 }
 
@@ -155,6 +161,8 @@ Optional env overrides:
   MICRO_BATCH_SIZE=$MICRO_BATCH_SIZE
   EVAL_BATCH_SIZE=$EVAL_BATCH_SIZE
   WORKERS=$WORKERS
+  TEXT_ENCODER=$TEXT_ENCODER
+  MAX_TEXT_TOKENS=$MAX_TEXT_TOKENS
   CHECKPOINT_VIDEO_SWIN=$CHECKPOINT_VIDEO_SWIN
 EOF
     exit 2

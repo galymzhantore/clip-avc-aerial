@@ -13,7 +13,7 @@ from models.clip_encoder import CLIPViTEncoder
 from models.context_enriched import ContextEnrichedTransformer
 from models.cross_transformer import CrossTransformer
 from models.temporal_transformer import TemporalTransformer
-from models.text_encoder import BERTTextEncoder
+from models.text_encoder import BERTTextEncoder, CLIPTextEncoder
 from models.video_swin import VideoSwinEncoder
 
 
@@ -27,11 +27,12 @@ class CLIP_AVC_Config:
     dropout: float = 0.0
     clip_model: str = "ViT-B/32"
     bert_model: str = "bert-base-uncased"
+    text_encoder: str = "clip"
     swin_weights: str | None = "KINETICS400_V1"  # set to None to skip pretrained download
     clip_frames: int = 8
     swin_frames: int = 16
     n_frames: int | None = field(default=None, repr=False)
-    max_text_tokens: int = 32
+    max_text_tokens: int = 77
     init_logit_scale: float = math.log(1.0 / 0.07)  # CLIP default
     use_cross_transformer: bool = True
     use_context_transformer: bool = True
@@ -59,7 +60,12 @@ class CLIP_AVC(nn.Module):
         cfg = self.config
 
         self.clip_vit = CLIPViTEncoder(model_name=cfg.clip_model)
-        self.bert = BERTTextEncoder(model_name=cfg.bert_model, embed_dim=cfg.embed_dim)
+        if cfg.text_encoder == "clip":
+            self.bert = CLIPTextEncoder(model_name=cfg.clip_model, embed_dim=cfg.embed_dim)
+        elif cfg.text_encoder == "bert":
+            self.bert = BERTTextEncoder(model_name=cfg.bert_model, embed_dim=cfg.embed_dim)
+        else:
+            raise ValueError(f"Unsupported text_encoder={cfg.text_encoder!r}")
         self.video_swin = VideoSwinEncoder(
             embed_dim=cfg.embed_dim,
             pretrained=cfg.swin_weights is not None,
@@ -180,6 +186,28 @@ class CLIP_AVC(nn.Module):
         mask = text.attention_mask.unsqueeze(-1).type_as(s_seq)
         return (s_seq * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
 
+    @torch.no_grad()
+    def encode_visual_only_refined(self, v: torch.Tensor) -> torch.Tensor:
+        """Build a refined visual embedding without pairing it to a class prompt."""
+        if not self.config.use_context_transformer:
+            return v.mean(dim=1)
+        b = v.size(0)
+        zero_s = torch.zeros(
+            b,
+            self.config.max_text_tokens,
+            self.config.embed_dim,
+            dtype=v.dtype,
+            device=v.device,
+        )
+        zero_mask = torch.zeros(
+            b,
+            self.config.max_text_tokens,
+            dtype=torch.long,
+            device=v.device,
+        )
+        v_seq, _ = self.context(v, zero_s, text_attention_mask=zero_mask)
+        return v_seq.mean(dim=1)
+
     def trainable_parameters(self):
-        """Returns parameters that require gradients (skipping frozen CLIP/BERT)."""
+        """Returns parameters that require gradients (skipping frozen CLIP/text towers)."""
         return [p for p in self.parameters() if p.requires_grad]

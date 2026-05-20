@@ -48,12 +48,24 @@ def _classes(name: str):
     return list(ERA_CLASSES if name == "era" else MOD20_CLASSES)
 
 
-def _config_from_checkpoint(saved: dict, clip_frames: int, swin_frames: int) -> CLIP_AVC_Config:
+def _config_from_checkpoint(
+    saved: dict,
+    clip_frames: int,
+    swin_frames: int,
+    state_dict: dict[str, torch.Tensor],
+) -> CLIP_AVC_Config:
     cfg_dict = dict(saved)
     cfg_dict.pop("n_frames", None)
     cfg_dict["clip_frames"] = clip_frames
     cfg_dict["swin_frames"] = swin_frames
+    if "text_encoder" not in cfg_dict and any(k.startswith("bert.bert.") for k in state_dict):
+        cfg_dict["text_encoder"] = "bert"
     return CLIP_AVC_Config(**cfg_dict)
+
+
+def _masked_text_mean(tokens: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    mask = attention_mask.unsqueeze(-1).type_as(tokens)
+    return (tokens * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
 
 
 def _score_with_context(
@@ -81,6 +93,22 @@ def _score_with_context(
     return sims
 
 
+def _score_cached(
+    model: CLIP_AVC,
+    v: torch.Tensor,
+    class_text: torch.Tensor,
+    score_mode: str,
+) -> torch.Tensor:
+    if score_mode in {"coarse", "visual_coarse_text_refined"}:
+        visual = v.mean(dim=1)
+    else:
+        visual = model.encode_visual_only_refined(v)
+
+    visual = F.normalize(visual, dim=-1)
+    class_text = F.normalize(class_text, dim=-1)
+    return visual @ class_text.T
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=["era", "mod20"], required=True)
@@ -93,6 +121,20 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--score-mode",
+        choices=[
+            "auto",
+            "classifier",
+            "refined_cached",
+            "refined_pair",
+            "coarse",
+            "visual_refined_text_coarse",
+            "visual_coarse_text_refined",
+        ],
+        default="auto",
+        help="auto uses classifier checkpoints when present, otherwise cached refined CLIP-style scoring.",
+    )
     args = p.parse_args()
 
     device = torch.device("cuda")
@@ -100,7 +142,7 @@ def main() -> None:
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     saved = ckpt.get("config", {}) or {}
     clip_frames, swin_frames = _resolve_frame_args(args, saved)
-    cfg = _config_from_checkpoint(saved, clip_frames, swin_frames)
+    cfg = _config_from_checkpoint(saved, clip_frames, swin_frames, ckpt["model"])
     model = CLIP_AVC(cfg).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
@@ -121,6 +163,22 @@ def main() -> None:
             toks["attention_mask"],
             toks.get("token_type_ids"),
         )
+        coarse_text = text.eos
+        if cfg.use_context_transformer:
+            refined_text = model.encode_text_only_refined(
+                toks["input_ids"],
+                toks["attention_mask"],
+                toks.get("token_type_ids"),
+            )
+        else:
+            refined_text = _masked_text_mean(text.tokens, text.attention_mask)
+
+    score_mode = args.score_mode
+    if score_mode == "auto":
+        score_mode = "classifier" if classifier is not None else "refined_cached"
+    if score_mode == "classifier" and classifier is None:
+        raise ValueError("--score-mode classifier requested, but checkpoint has no classifier head.")
+    print(f"score_mode: {score_mode}")
 
     ds = _build_dataset(args.dataset, args.data_root, args.split, clip_frames, swin_frames)
     loader_kwargs = dict(
@@ -143,10 +201,15 @@ def main() -> None:
 
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.amp):
                 v, _ = model.encode_visual(frames, swin_video)
-                if classifier is not None:
+                if score_mode == "classifier":
                     sims = classifier(v.mean(dim=1))
-                else:
+                elif score_mode == "refined_pair":
                     sims = _score_with_context(model, v, text, args.amp)
+                else:
+                    class_text = refined_text
+                    if score_mode in {"coarse", "visual_refined_text_coarse"}:
+                        class_text = coarse_text
+                    sims = _score_cached(model, v, class_text, score_mode)
             preds = sims.argmax(dim=-1)
             correct += (preds == labels).sum().item()
             total += labels.numel()
