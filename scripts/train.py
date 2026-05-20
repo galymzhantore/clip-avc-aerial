@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from data import ERA_CLASSES, MOD20_CLASSES, collate_clip_batch, era_dataset, mod20_dataset
-from models.clip_avc import CLIP_AVC, CLIP_AVC_Config
+from models.clip_avc import CLIP_AVC, CLIP_AVC_Config, CLIP_AVC_Outputs
 from utils.prompts import build_prompts
 
 
@@ -105,6 +105,12 @@ def main() -> None:
     p.add_argument("--data-root", type=Path, required=True)
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument(
+        "--micro-batch-size",
+        type=int,
+        default=0,
+        help="Split model forward passes while keeping InfoNCE over --batch-size samples.",
+    )
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--prefetch-factor", type=int, default=2)
     p.add_argument("--lr", type=float, default=5e-6)
@@ -183,6 +189,7 @@ def main() -> None:
             "clip_frames": clip_frames,
             "swin_frames": swin_frames,
             "batch_size": args.batch_size,
+            "micro_batch_size": args.micro_batch_size or args.batch_size,
             "lr": args.lr,
             "weight_decay": args.weight_decay,
             "scheduler": args.scheduler,
@@ -200,21 +207,46 @@ def main() -> None:
         running, n_seen = 0.0, 0
         for batch in bar:
             labels = batch["label"].to(device, non_blocking=True)
-            input_ids = class_tokens["input_ids"][labels]
-            attn = class_tokens["attention_mask"][labels]
-            tti = class_tokens.get("token_type_ids")
-            if tti is not None:
-                tti = tti[labels]
+            input_ids_all = class_tokens["input_ids"][labels]
+            attn_all = class_tokens["attention_mask"][labels]
+            tti_all = class_tokens.get("token_type_ids")
+            if tti_all is not None:
+                tti_all = tti_all[labels]
+            frames_all = batch["clip_frames"].to(device, non_blocking=True)
+            swin_all = batch["swin_video"].to(device, non_blocking=True)
 
             optim.zero_grad(set_to_none=True)
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.amp):
-                out = model(
-                    frames=batch["clip_frames"].to(device, non_blocking=True),
-                    clip_video=batch["swin_video"].to(device, non_blocking=True),
-                    input_ids=input_ids,
-                    attention_mask=attn,
-                    token_type_ids=tti,
-                )
+                micro = args.micro_batch_size or args.batch_size
+                if micro >= labels.size(0):
+                    out = model(
+                        frames=frames_all,
+                        clip_video=swin_all,
+                        input_ids=input_ids_all,
+                        attention_mask=attn_all,
+                        token_type_ids=tti_all,
+                    )
+                else:
+                    chunks: list[CLIP_AVC_Outputs] = []
+                    for start in range(0, labels.size(0), micro):
+                        end = start + micro
+                        tti = None if tti_all is None else tti_all[start:end]
+                        chunks.append(
+                            model(
+                                frames=frames_all[start:end],
+                                clip_video=swin_all[start:end],
+                                input_ids=input_ids_all[start:end],
+                                attention_mask=attn_all[start:end],
+                                token_type_ids=tti,
+                            )
+                        )
+                    out = CLIP_AVC_Outputs(
+                        v_bar=torch.cat([c.v_bar for c in chunks], dim=0),
+                        s_eos=torch.cat([c.s_eos for c in chunks], dim=0),
+                        v_hat=torch.cat([c.v_hat for c in chunks], dim=0),
+                        s_hat=torch.cat([c.s_hat for c in chunks], dim=0),
+                        logit_scale=chunks[0].logit_scale,
+                    )
                 if classifier is None:
                     losses = model.compute_losses(
                         out, lam=args.lambda_c, use_lc=args.lc, use_lr=args.lr_loss

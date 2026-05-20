@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${1:-all}"
+
+REPO_DIR="${REPO_DIR:-$HOME/Documents/clip-avc-aerial}"
+UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
+ERA_ROOT="${ERA_ROOT:-$HOME/datasets/era_clipavc}"
+MOD20_ROOT="${MOD20_ROOT:-$HOME/datasets/mod20_clipavc}"
+OUT_DIR="${OUT_DIR:-checkpoints}"
+LOG_DIR="${LOG_DIR:-logs}"
+
+EPOCHS="${EPOCHS:-50}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
+MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-4}"
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-4}"
+WORKERS="${WORKERS:-8}"
+LR="${LR:-5e-6}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-0.2}"
+CLIP_FRAMES="${CLIP_FRAMES:-8}"
+SWIN_FRAMES="${SWIN_FRAMES:-16}"
+CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
+
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+cd "$REPO_DIR"
+mkdir -p "$LOG_DIR" "$OUT_DIR"
+
+if [[ ! -x "$UV_BIN" ]]; then
+  echo "uv not found at $UV_BIN. Set UV_BIN=/path/to/uv or install uv." >&2
+  exit 1
+fi
+
+common_train_args=(
+  --epochs "$EPOCHS"
+  --batch-size "$BATCH_SIZE"
+  --micro-batch-size "$MICRO_BATCH_SIZE"
+  --workers "$WORKERS"
+  --lr "$LR"
+  --weight-decay "$WEIGHT_DECAY"
+  --clip-frames "$CLIP_FRAMES"
+  --swin-frames "$SWIN_FRAMES"
+  --scheduler step
+  --lr-step-epochs 15
+  --lr-gamma 0.1
+  --amp
+  --out "$OUT_DIR"
+)
+
+common_eval_args=(
+  --split test
+  --batch-size "$EVAL_BATCH_SIZE"
+  --workers "$WORKERS"
+  --clip-frames "$CLIP_FRAMES"
+  --swin-frames "$SWIN_FRAMES"
+  --amp
+)
+
+shape_test() {
+  "$UV_BIN" run python -m scripts.shape_test \
+    --batch 1 \
+    --clip-frames "$CLIP_FRAMES" \
+    --swin-frames "$SWIN_FRAMES" \
+    2>&1 | tee "$LOG_DIR/shape_test.log"
+}
+
+train_era() {
+  local extra_args=()
+  if [[ "$CHECKPOINT_VIDEO_SWIN" == "1" ]]; then
+    extra_args+=(--checkpoint-video-swin)
+  fi
+
+  "$UV_BIN" run python -m scripts.train \
+    --dataset era \
+    --data-root "$ERA_ROOT" \
+    "${common_train_args[@]}" \
+    "${extra_args[@]}" \
+    2>&1 | tee "$LOG_DIR/train_era_full.log"
+}
+
+eval_era() {
+  "$UV_BIN" run python -m scripts.eval \
+    --dataset era \
+    --data-root "$ERA_ROOT" \
+    --checkpoint "$OUT_DIR/era/era_epoch$(printf '%03d' "$EPOCHS").pt" \
+    "${common_eval_args[@]}" \
+    2>&1 | tee "$LOG_DIR/eval_era_full.log"
+}
+
+train_mod20() {
+  local extra_args=()
+  if [[ "$CHECKPOINT_VIDEO_SWIN" == "1" ]]; then
+    extra_args+=(--checkpoint-video-swin)
+  fi
+
+  "$UV_BIN" run python -m scripts.train \
+    --dataset mod20 \
+    --data-root "$MOD20_ROOT" \
+    "${common_train_args[@]}" \
+    "${extra_args[@]}" \
+    2>&1 | tee "$LOG_DIR/train_mod20_full.log"
+}
+
+eval_mod20() {
+  "$UV_BIN" run python -m scripts.eval \
+    --dataset mod20 \
+    --data-root "$MOD20_ROOT" \
+    --checkpoint "$OUT_DIR/mod20/mod20_epoch$(printf '%03d' "$EPOCHS").pt" \
+    "${common_eval_args[@]}" \
+    2>&1 | tee "$LOG_DIR/eval_mod20_full.log"
+}
+
+case "$MODE" in
+  shape)
+    shape_test
+    ;;
+  era)
+    shape_test
+    train_era
+    eval_era
+    ;;
+  mod20)
+    shape_test
+    train_mod20
+    eval_mod20
+    ;;
+  train-era)
+    train_era
+    ;;
+  eval-era)
+    eval_era
+    ;;
+  train-mod20)
+    train_mod20
+    ;;
+  eval-mod20)
+    eval_mod20
+    ;;
+  all)
+    shape_test
+    train_era
+    eval_era
+    train_mod20
+    eval_mod20
+    ;;
+  *)
+    cat >&2 <<EOF
+Usage: $0 {shape|era|mod20|train-era|eval-era|train-mod20|eval-mod20|all}
+
+Optional env overrides:
+  REPO_DIR=$REPO_DIR
+  ERA_ROOT=$ERA_ROOT
+  MOD20_ROOT=$MOD20_ROOT
+  BATCH_SIZE=$BATCH_SIZE
+  MICRO_BATCH_SIZE=$MICRO_BATCH_SIZE
+  EVAL_BATCH_SIZE=$EVAL_BATCH_SIZE
+  WORKERS=$WORKERS
+  CHECKPOINT_VIDEO_SWIN=$CHECKPOINT_VIDEO_SWIN
+EOF
+    exit 2
+    ;;
+esac
