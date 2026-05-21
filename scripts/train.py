@@ -99,6 +99,24 @@ def _build_scheduler(args: argparse.Namespace, optim, steps_per_epoch: int):
     raise ValueError(args.scheduler)
 
 
+def _save_checkpoint(
+    out_dir: Path,
+    dataset: str,
+    epoch: int,
+    payload: dict,
+    keep_checkpoints: int,
+) -> None:
+    ckpt = out_dir / f"{dataset}_epoch{epoch:03d}.pt"
+    tmp = ckpt.with_suffix(ckpt.suffix + ".tmp")
+    torch.save(payload, tmp)
+    tmp.replace(ckpt)
+
+    if keep_checkpoints > 0:
+        checkpoints = sorted(out_dir.glob(f"{dataset}_epoch*.pt"))
+        for old in checkpoints[:-keep_checkpoints]:
+            old.unlink(missing_ok=True)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=["era", "mod20"], required=True)
@@ -124,6 +142,18 @@ def main() -> None:
     p.add_argument("--max-text-tokens", type=int, default=77)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=Path("checkpoints"))
+    p.add_argument(
+        "--save-every",
+        type=int,
+        default=10,
+        help="Save every N epochs plus the final epoch. Set 0 to save only the final epoch.",
+    )
+    p.add_argument(
+        "--keep-checkpoints",
+        type=int,
+        default=2,
+        help="Keep only the newest N saved checkpoints per dataset. Set 0 to keep all.",
+    )
     p.add_argument("--scheduler", choices=["step", "cosine", "none"], default="step")
     p.add_argument("--lr-step-epochs", type=int, default=15)
     p.add_argument("--lr-gamma", type=float, default=0.1)
@@ -199,6 +229,8 @@ def main() -> None:
             "lr": args.lr,
             "weight_decay": args.weight_decay,
             "scheduler": args.scheduler,
+            "save_every": args.save_every,
+            "keep_checkpoints": args.keep_checkpoints,
             "amp": args.amp,
             "cross_transformer": args.cross_transformer,
             "context_transformer": args.context_transformer,
@@ -282,11 +314,21 @@ def main() -> None:
         if sched is not None and args.scheduler == "step":
             sched.step()
 
-        ckpt = out_dir / f"{args.dataset}_epoch{epoch+1:03d}.pt"
-        payload = {"model": model.state_dict(), "config": cfg.__dict__, "epoch": epoch + 1}
-        if classifier is not None:
-            payload["classifier"] = classifier.state_dict()
-        torch.save(payload, ckpt)
+        epoch_num = epoch + 1
+        should_save = epoch_num == args.epochs or (
+            args.save_every > 0 and epoch_num % args.save_every == 0
+        )
+        if should_save:
+            payload = {"model": model.state_dict(), "config": cfg.__dict__, "epoch": epoch_num}
+            if classifier is not None:
+                payload["classifier"] = classifier.state_dict()
+            _save_checkpoint(
+                out_dir,
+                args.dataset,
+                epoch_num,
+                payload,
+                keep_checkpoints=args.keep_checkpoints,
+            )
 
 
 if __name__ == "__main__":
