@@ -15,7 +15,7 @@ from models.context_enriched import ContextEnrichedTransformer
 from models.cross_transformer import CrossTransformer
 from models.temporal_transformer import TemporalTransformer
 from models.text_encoder import BERTTextEncoder, CLIPTextEncoder
-from models.video_swin import VideoSwinEncoder
+from models.video_swin import SUPPORTED_VIDEO_MODELS, VideoSwinEncoder
 
 
 @dataclass
@@ -32,6 +32,7 @@ class CLIP_AVC_Config:
     refined_text_pooling: str = "eos"
     freeze_clip_vit: bool = True
     freeze_video_swin_backbone: bool = False
+    video_model: str = "swin3d_b"
     swin_weights: str | None = "KINETICS400_V1"  # set to None to skip pretrained download
     clip_frames: int = 8
     swin_frames: int = 16
@@ -49,6 +50,11 @@ class CLIP_AVC_Config:
             self.swin_frames = self.n_frames
         if self.refined_text_pooling not in {"eos", "mean"}:
             raise ValueError(f"Unsupported refined_text_pooling={self.refined_text_pooling!r}")
+        if self.video_model not in SUPPORTED_VIDEO_MODELS:
+            raise ValueError(
+                f"Unsupported video_model={self.video_model!r}; "
+                f"choose one of {SUPPORTED_VIDEO_MODELS!r}."
+            )
 
 
 class CLIP_AVC_Outputs(NamedTuple):
@@ -67,6 +73,12 @@ class CLIP_AVC(nn.Module):
         cfg = self.config
 
         self.clip_vit = CLIPViTEncoder(model_name=cfg.clip_model, trainable=not cfg.freeze_clip_vit)
+        if self.clip_vit.embed_dim != cfg.embed_dim:
+            raise ValueError(
+                f"{cfg.clip_model} visual output dim is {self.clip_vit.embed_dim}, "
+                f"but CLIP_AVC_Config.embed_dim={cfg.embed_dim}. "
+                "Use a CLIP checkpoint with the same joint dimension or extend the projection path."
+            )
         if cfg.text_encoder == "clip":
             self.bert = CLIPTextEncoder(model_name=cfg.clip_model, embed_dim=cfg.embed_dim)
         elif cfg.text_encoder == "bert":
@@ -75,6 +87,7 @@ class CLIP_AVC(nn.Module):
             raise ValueError(f"Unsupported text_encoder={cfg.text_encoder!r}")
         self.video_swin = VideoSwinEncoder(
             embed_dim=cfg.embed_dim,
+            model_name=cfg.video_model,
             pretrained=cfg.swin_weights is not None,
             weights=cfg.swin_weights or "KINETICS400_V1",
             gradient_checkpointing=cfg.checkpoint_video_swin,

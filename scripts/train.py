@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from data import ERA_CLASSES, MOD20_CLASSES, collate_clip_batch, era_dataset, mod20_dataset
 from models.clip_avc import CLIP_AVC, CLIP_AVC_Config, CLIP_AVC_Outputs
+from models.video_swin import SUPPORTED_VIDEO_MODELS
 from utils.prompts import build_prompts
 
 
@@ -151,6 +152,7 @@ def main() -> None:
     p.add_argument("--clip-frames", type=int, default=None, help="Paper default: 8.")
     p.add_argument("--swin-frames", type=int, default=None, help="Paper default: 16.")
     p.add_argument("--resize-size", type=int, default=256, help="Resize short side before 224 crop.")
+    p.add_argument("--clip-model", type=str, default="ViT-B/32")
     p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     p.add_argument("--max-text-tokens", type=int, default=77)
     p.add_argument(
@@ -161,6 +163,7 @@ def main() -> None:
     )
     p.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--freeze-video-swin-backbone", action=argparse.BooleanOptionalAction, default=False)
+    p.add_argument("--video-model", choices=SUPPORTED_VIDEO_MODELS, default="swin3d_b")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=Path("checkpoints"))
     p.add_argument(
@@ -232,9 +235,11 @@ def main() -> None:
         use_cross_transformer=args.cross_transformer,
         use_context_transformer=args.context_transformer,
         checkpoint_video_swin=args.checkpoint_video_swin,
+        clip_model=args.clip_model,
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
         refined_text_pooling=args.refined_text_pooling,
+        video_model=args.video_model,
         freeze_clip_vit=args.freeze_clip_vit,
         freeze_video_swin_backbone=args.freeze_video_swin_backbone,
     )
@@ -284,11 +289,13 @@ def main() -> None:
             "clip_frames": clip_frames,
             "swin_frames": swin_frames,
             "resize_size": args.resize_size,
+            "clip_model": args.clip_model,
             "text_encoder": args.text_encoder,
             "max_text_tokens": args.max_text_tokens,
             "refined_text_pooling": args.refined_text_pooling,
             "freeze_clip_vit": args.freeze_clip_vit,
             "freeze_video_swin_backbone": args.freeze_video_swin_backbone,
+            "video_model": args.video_model,
             "batch_size": args.batch_size,
             "micro_batch_size": args.micro_batch_size or args.batch_size,
             "lr": args.lr,

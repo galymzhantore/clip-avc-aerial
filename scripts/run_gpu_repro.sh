@@ -20,11 +20,13 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-0.2}"
 CLIP_FRAMES="${CLIP_FRAMES:-8}"
 SWIN_FRAMES="${SWIN_FRAMES:-16}"
 RESIZE_SIZE="${RESIZE_SIZE:-256}"
+CLIP_MODEL="${CLIP_MODEL:-ViT-B/32}"
 TEXT_ENCODER="${TEXT_ENCODER:-clip}"
 MAX_TEXT_TOKENS="${MAX_TEXT_TOKENS:-77}"
 REFINED_TEXT_POOLING="${REFINED_TEXT_POOLING:-eos}"
 FREEZE_CLIP_VIT="${FREEZE_CLIP_VIT:-1}"
 FREEZE_VIDEO_SWIN_BACKBONE="${FREEZE_VIDEO_SWIN_BACKBONE:-0}"
+VIDEO_MODEL="${VIDEO_MODEL:-swin3d_b}"
 CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
 SAVE_EVERY="${SAVE_EVERY:-10}"
 KEEP_CHECKPOINTS="${KEEP_CHECKPOINTS:-2}"
@@ -55,9 +57,11 @@ common_train_args=(
   --clip-frames "$CLIP_FRAMES"
   --swin-frames "$SWIN_FRAMES"
   --resize-size "$RESIZE_SIZE"
+  --clip-model "$CLIP_MODEL"
   --text-encoder "$TEXT_ENCODER"
   --max-text-tokens "$MAX_TEXT_TOKENS"
   --refined-text-pooling "$REFINED_TEXT_POOLING"
+  --video-model "$VIDEO_MODEL"
   --scheduler step
   --lr-step-epochs 15
   --lr-gamma 0.1
@@ -117,9 +121,11 @@ shape_test() {
     --batch 1 \
     --clip-frames "$CLIP_FRAMES" \
     --swin-frames "$SWIN_FRAMES" \
+    --clip-model "$CLIP_MODEL" \
     --text-encoder "$TEXT_ENCODER" \
     --max-text-tokens "$MAX_TEXT_TOKENS" \
     --refined-text-pooling "$REFINED_TEXT_POOLING" \
+    --video-model "$VIDEO_MODEL" \
     "${freeze_args[@]}" \
     2>&1 | tee "$LOG_DIR/shape_test.log"
 }
@@ -216,11 +222,13 @@ Optional env overrides:
   EVAL_BATCH_SIZE=$EVAL_BATCH_SIZE
   WORKERS=$WORKERS
   RESIZE_SIZE=$RESIZE_SIZE
+  CLIP_MODEL=$CLIP_MODEL
   TEXT_ENCODER=$TEXT_ENCODER
   MAX_TEXT_TOKENS=$MAX_TEXT_TOKENS
   REFINED_TEXT_POOLING=$REFINED_TEXT_POOLING
   FREEZE_CLIP_VIT=$FREEZE_CLIP_VIT
   FREEZE_VIDEO_SWIN_BACKBONE=$FREEZE_VIDEO_SWIN_BACKBONE
+  VIDEO_MODEL=$VIDEO_MODEL
   CHECKPOINT_VIDEO_SWIN=$CHECKPOINT_VIDEO_SWIN
   SAVE_EVERY=$SAVE_EVERY
   KEEP_CHECKPOINTS=$KEEP_CHECKPOINTS

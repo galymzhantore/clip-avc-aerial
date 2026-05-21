@@ -9,6 +9,7 @@ import argparse
 import torch
 
 from models.clip_avc import CLIP_AVC, CLIP_AVC_Config
+from models.video_swin import SUPPORTED_VIDEO_MODELS
 
 
 def main() -> None:
@@ -17,11 +18,13 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--clip-frames", type=int, default=8)
     parser.add_argument("--swin-frames", type=int, default=16)
+    parser.add_argument("--clip-model", type=str, default="ViT-B/32")
     parser.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     parser.add_argument("--max-text-tokens", type=int, default=77)
     parser.add_argument("--refined-text-pooling", choices=["eos", "mean"], default="eos")
     parser.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--freeze-video-swin-backbone", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--video-model", choices=SUPPORTED_VIDEO_MODELS, default="swin3d_b")
     parser.add_argument("--no-swin-pretrained", action="store_true",
                         help="Skip Kinetics-400 weight download (random init).")
     args = parser.parse_args()
@@ -29,7 +32,9 @@ def main() -> None:
     cfg = CLIP_AVC_Config(
         clip_frames=args.clip_frames,
         swin_frames=args.swin_frames,
+        clip_model=args.clip_model,
         swin_weights=None if args.no_swin_pretrained else "KINETICS400_V1",
+        video_model=args.video_model,
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
         refined_text_pooling=args.refined_text_pooling,
@@ -71,7 +76,7 @@ def main() -> None:
     print("--- intermediate ---")
     print(f"U (CLIP per-frame)        : {tuple(u.shape)}")
     print(f"U_tilde (Temporal x{cfg.temporal_layers})    : {tuple(u_tilde.shape)}")
-    print(f"W (Swin Stage-4 tokens)   : {tuple(w_grid.shape)}")
+    print(f"W ({cfg.video_model} tokens)      : {tuple(w_grid.shape)}")
     print(f"V (Cross x{cfg.cross_layers})            : {tuple(v.shape)}")
     print(f"S ({cfg.text_encoder} tokens)           : {tuple(text.tokens.shape)}")
     print(f"Context-Enriched visual   : {tuple(v_seq.shape)}")
