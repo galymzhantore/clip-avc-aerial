@@ -19,6 +19,7 @@ LR="${LR:-5e-6}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-0.2}"
 CLIP_FRAMES="${CLIP_FRAMES:-8}"
 SWIN_FRAMES="${SWIN_FRAMES:-16}"
+RESIZE_SIZE="${RESIZE_SIZE:-256}"
 TEXT_ENCODER="${TEXT_ENCODER:-clip}"
 MAX_TEXT_TOKENS="${MAX_TEXT_TOKENS:-77}"
 CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
@@ -45,6 +46,7 @@ common_train_args=(
   --weight-decay "$WEIGHT_DECAY"
   --clip-frames "$CLIP_FRAMES"
   --swin-frames "$SWIN_FRAMES"
+  --resize-size "$RESIZE_SIZE"
   --text-encoder "$TEXT_ENCODER"
   --max-text-tokens "$MAX_TEXT_TOKENS"
   --scheduler step
@@ -63,6 +65,7 @@ common_eval_args=(
   --workers "$WORKERS"
   --clip-frames "$CLIP_FRAMES"
   --swin-frames "$SWIN_FRAMES"
+  --resize-size "$RESIZE_SIZE"
   --amp
 )
 
@@ -167,6 +170,7 @@ Optional env overrides:
   MICRO_BATCH_SIZE=$MICRO_BATCH_SIZE
   EVAL_BATCH_SIZE=$EVAL_BATCH_SIZE
   WORKERS=$WORKERS
+  RESIZE_SIZE=$RESIZE_SIZE
   TEXT_ENCODER=$TEXT_ENCODER
   MAX_TEXT_TOKENS=$MAX_TEXT_TOKENS
   CHECKPOINT_VIDEO_SWIN=$CHECKPOINT_VIDEO_SWIN

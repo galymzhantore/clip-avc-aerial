@@ -35,6 +35,7 @@ def _build_dataset(
     split: str,
     clip_frames: int,
     swin_frames: int,
+    resize_size: int,
     color_jitter: bool = True,
 ):
     common = dict(
@@ -42,6 +43,7 @@ def _build_dataset(
         split=split,
         clip_frames=clip_frames,
         swin_frames=swin_frames,
+        resize_size=resize_size,
         color_jitter=color_jitter,
     )
     if name == "era":
@@ -138,6 +140,7 @@ def main() -> None:
     p.add_argument("--frames", type=int, default=None, help="Backward-compatible alias that sets both paths.")
     p.add_argument("--clip-frames", type=int, default=None, help="Paper default: 8.")
     p.add_argument("--swin-frames", type=int, default=None, help="Paper default: 16.")
+    p.add_argument("--resize-size", type=int, default=256, help="Resize short side before 224 crop.")
     p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     p.add_argument("--max-text-tokens", type=int, default=77)
     p.add_argument("--seed", type=int, default=0)
@@ -195,6 +198,7 @@ def main() -> None:
         "train",
         clip_frames,
         swin_frames,
+        args.resize_size,
         color_jitter=args.color_jitter,
     )
     train_loader = DataLoader(train_ds, **_loader_kwargs(args))
@@ -228,6 +232,7 @@ def main() -> None:
             "data_root": str(args.data_root),
             "clip_frames": clip_frames,
             "swin_frames": swin_frames,
+            "resize_size": args.resize_size,
             "text_encoder": args.text_encoder,
             "max_text_tokens": args.max_text_tokens,
             "batch_size": args.batch_size,
@@ -330,7 +335,12 @@ def main() -> None:
             args.save_every > 0 and epoch_num % args.save_every == 0
         )
         if should_save:
-            payload = {"model": model.state_dict(), "config": cfg.__dict__, "epoch": epoch_num}
+            payload = {
+                "model": model.state_dict(),
+                "config": cfg.__dict__,
+                "data_config": {"resize_size": args.resize_size},
+                "epoch": epoch_num,
+            }
             if classifier is not None:
                 payload["classifier"] = classifier.state_dict()
             _save_checkpoint(

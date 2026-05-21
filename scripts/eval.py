@@ -27,12 +27,20 @@ def _resolve_frame_args(args: argparse.Namespace, saved: dict) -> tuple[int, int
     return clip_frames, swin_frames
 
 
-def _build_dataset(name: str, root: Path, split: str, clip_frames: int, swin_frames: int):
+def _build_dataset(
+    name: str,
+    root: Path,
+    split: str,
+    clip_frames: int,
+    swin_frames: int,
+    resize_size: int,
+):
     common = dict(
         root=root,
         split=split,
         clip_frames=clip_frames,
         swin_frames=swin_frames,
+        resize_size=resize_size,
         random_crop=False,
         horizontal_flip=False,
         color_jitter=False,
@@ -118,6 +126,7 @@ def main() -> None:
     p.add_argument("--frames", type=int, default=None, help="Backward-compatible alias that sets both paths.")
     p.add_argument("--clip-frames", type=int, default=None)
     p.add_argument("--swin-frames", type=int, default=None)
+    p.add_argument("--resize-size", type=int, default=None, help="Resize short side before center crop.")
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
@@ -142,6 +151,8 @@ def main() -> None:
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     saved = ckpt.get("config", {}) or {}
     clip_frames, swin_frames = _resolve_frame_args(args, saved)
+    data_config = ckpt.get("data_config", {}) or {}
+    resize_size = args.resize_size or data_config.get("resize_size") or 256
     cfg = _config_from_checkpoint(saved, clip_frames, swin_frames, ckpt["model"])
     model = CLIP_AVC(cfg).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
@@ -180,7 +191,7 @@ def main() -> None:
         raise ValueError("--score-mode classifier requested, but checkpoint has no classifier head.")
     print(f"score_mode: {score_mode}")
 
-    ds = _build_dataset(args.dataset, args.data_root, args.split, clip_frames, swin_frames)
+    ds = _build_dataset(args.dataset, args.data_root, args.split, clip_frames, swin_frames, resize_size)
     loader_kwargs = dict(
         batch_size=args.batch_size,
         shuffle=False,

@@ -12,9 +12,9 @@ Expected folder layout (the user arranges these):
         test/
             class_name_1/...
 
-Each video is uniformly sub-sampled for both visual paths, resized to
-``image_size``, and returned twice: once normalised with CLIP mean/std for the
-ViT path, once with the Kinetics-400 Video Swin mean/std for the Video Swin path.
+Each video is uniformly sub-sampled for both visual paths, resized then cropped
+to ``image_size``, and returned twice: once normalised with CLIP mean/std for the
+ViT path, once with the torchvision Swin3D weights mean/std for the Video Swin path.
 The paper samples 8 frames for the CLIP/2-D path and 16 frames for the Video
 Swin/3-D path.
 """
@@ -32,10 +32,10 @@ from torch.utils.data import Dataset
 from models.clip_encoder import CLIPViTEncoder
 
 CLIP_MEAN, CLIP_STD = CLIPViTEncoder.normalize_mean_std()
-# Torchvision's Kinetics-400 Video Swin weights are trained with this video
-# normalization, not ImageNet still-image normalization.
-SWIN_MEAN = (0.43216, 0.394666, 0.37645)
-SWIN_STD = (0.22803, 0.22145, 0.216989)
+# Torchvision's Swin3D_B_Weights.KINETICS400_V1 preprocessing uses ImageNet
+# normalization after resizing the short side to 256 and cropping to 224.
+SWIN_MEAN = (0.485, 0.456, 0.406)
+SWIN_STD = (0.229, 0.224, 0.225)
 
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
@@ -70,6 +70,7 @@ class VideoClipDataset(Dataset):
         clip_frames: int | None = None,
         swin_frames: int | None = None,
         image_size: int = 224,
+        resize_size: int = 256,
         random_crop: bool = True,
         horizontal_flip: bool = True,
         color_jitter: bool = True,
@@ -80,6 +81,9 @@ class VideoClipDataset(Dataset):
         self.clip_frames = clip_frames if clip_frames is not None else n_frames
         self.swin_frames = swin_frames if swin_frames is not None else n_frames
         self.image_size = image_size
+        self.resize_size = resize_size
+        if self.resize_size < self.image_size:
+            raise ValueError("resize_size must be >= image_size")
         self.random_crop = random_crop and split == "train"
         self.horizontal_flip = horizontal_flip and split == "train"
         self.color_jitter = color_jitter and split == "train"
@@ -133,7 +137,7 @@ class VideoClipDataset(Dataset):
         # frames: (T, H, W, 3) uint8
         t, h, w, _ = frames.shape
         short = min(h, w)
-        scale = self.image_size / short
+        scale = self.resize_size / short
         new_h, new_w = int(round(h * scale)), int(round(w * scale))
         x = torch.from_numpy(frames).permute(0, 3, 1, 2).float() / 255.0  # (T, 3, H, W)
         x = torch.nn.functional.interpolate(x, size=(new_h, new_w), mode="bilinear", align_corners=False)
