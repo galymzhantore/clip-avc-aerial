@@ -153,6 +153,7 @@ def main() -> None:
     p.add_argument("--resize-size", type=int, default=256, help="Resize short side before 224 crop.")
     p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     p.add_argument("--max-text-tokens", type=int, default=77)
+    p.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=Path("checkpoints"))
     p.add_argument(
@@ -212,6 +213,7 @@ def main() -> None:
         checkpoint_video_swin=args.checkpoint_video_swin,
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
+        freeze_clip_vit=args.freeze_clip_vit,
     )
     model = CLIP_AVC(cfg).to(device)
 
@@ -257,6 +259,7 @@ def main() -> None:
             "resize_size": args.resize_size,
             "text_encoder": args.text_encoder,
             "max_text_tokens": args.max_text_tokens,
+            "freeze_clip_vit": args.freeze_clip_vit,
             "batch_size": args.batch_size,
             "micro_batch_size": args.micro_batch_size or args.batch_size,
             "lr": args.lr,

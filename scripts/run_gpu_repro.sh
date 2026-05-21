@@ -22,6 +22,7 @@ SWIN_FRAMES="${SWIN_FRAMES:-16}"
 RESIZE_SIZE="${RESIZE_SIZE:-256}"
 TEXT_ENCODER="${TEXT_ENCODER:-clip}"
 MAX_TEXT_TOKENS="${MAX_TEXT_TOKENS:-77}"
+FREEZE_CLIP_VIT="${FREEZE_CLIP_VIT:-1}"
 CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
 SAVE_EVERY="${SAVE_EVERY:-10}"
 KEEP_CHECKPOINTS="${KEEP_CHECKPOINTS:-2}"
@@ -64,6 +65,12 @@ common_train_args=(
   --classifier-feature "$CLASSIFIER_FEATURE"
 )
 
+if [[ "$FREEZE_CLIP_VIT" == "1" ]]; then
+  common_train_args+=(--freeze-clip-vit)
+else
+  common_train_args+=(--no-freeze-clip-vit)
+fi
+
 if [[ "$CLASSIFIER_HEAD" == "1" ]]; then
   common_train_args+=(--classifier-head)
 else
@@ -81,12 +88,20 @@ common_eval_args=(
 )
 
 shape_test() {
+  local freeze_args=()
+  if [[ "$FREEZE_CLIP_VIT" == "1" ]]; then
+    freeze_args+=(--freeze-clip-vit)
+  else
+    freeze_args+=(--no-freeze-clip-vit)
+  fi
+
   "$UV_BIN" run python -m scripts.shape_test \
     --batch 1 \
     --clip-frames "$CLIP_FRAMES" \
     --swin-frames "$SWIN_FRAMES" \
     --text-encoder "$TEXT_ENCODER" \
     --max-text-tokens "$MAX_TEXT_TOKENS" \
+    "${freeze_args[@]}" \
     2>&1 | tee "$LOG_DIR/shape_test.log"
 }
 
@@ -184,6 +199,7 @@ Optional env overrides:
   RESIZE_SIZE=$RESIZE_SIZE
   TEXT_ENCODER=$TEXT_ENCODER
   MAX_TEXT_TOKENS=$MAX_TEXT_TOKENS
+  FREEZE_CLIP_VIT=$FREEZE_CLIP_VIT
   CHECKPOINT_VIDEO_SWIN=$CHECKPOINT_VIDEO_SWIN
   SAVE_EVERY=$SAVE_EVERY
   KEEP_CHECKPOINTS=$KEEP_CHECKPOINTS

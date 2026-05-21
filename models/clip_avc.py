@@ -28,6 +28,7 @@ class CLIP_AVC_Config:
     clip_model: str = "ViT-B/32"
     bert_model: str = "bert-base-uncased"
     text_encoder: str = "clip"
+    freeze_clip_vit: bool = True
     swin_weights: str | None = "KINETICS400_V1"  # set to None to skip pretrained download
     clip_frames: int = 8
     swin_frames: int = 16
@@ -59,7 +60,7 @@ class CLIP_AVC(nn.Module):
         self.config = config or CLIP_AVC_Config()
         cfg = self.config
 
-        self.clip_vit = CLIPViTEncoder(model_name=cfg.clip_model)
+        self.clip_vit = CLIPViTEncoder(model_name=cfg.clip_model, trainable=not cfg.freeze_clip_vit)
         if cfg.text_encoder == "clip":
             self.bert = CLIPTextEncoder(model_name=cfg.clip_model, embed_dim=cfg.embed_dim)
         elif cfg.text_encoder == "bert":
