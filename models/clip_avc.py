@@ -158,11 +158,12 @@ class CLIP_AVC(nn.Module):
         lam: float = 1.0,
         use_lc: bool = True,
         use_lr: bool = True,
+        labels: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         scale = out.logit_scale.clamp(max=100.0)
         zero = out.v_bar.new_zeros(())
-        l_c = bidirectional_info_nce(out.v_bar, out.s_eos, scale) if use_lc else zero
-        l_r = bidirectional_info_nce(out.v_hat, out.s_hat, scale) if use_lr else zero
+        l_c = bidirectional_info_nce(out.v_bar, out.s_eos, scale, labels=labels) if use_lc else zero
+        l_r = bidirectional_info_nce(out.v_hat, out.s_hat, scale, labels=labels) if use_lr else zero
         return {"loss": l_r + lam * l_c, "L_r": l_r, "L_c": l_c}
 
     # ------------------------------------------------------------------ inference

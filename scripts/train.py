@@ -164,6 +164,12 @@ def main() -> None:
     p.add_argument("--context-transformer", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--lc", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--lr-loss", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--contrastive-targets",
+        choices=["instance", "class"],
+        default="instance",
+        help="instance matches CLIP-style one-positive InfoNCE; class treats same-label batch items as positives.",
+    )
     args = p.parse_args()
 
     clip_frames, swin_frames = _resolve_frame_args(args)
@@ -236,6 +242,7 @@ def main() -> None:
             "context_transformer": args.context_transformer,
             "lc": args.lc,
             "lr_loss": args.lr_loss,
+            "contrastive_targets": args.contrastive_targets,
             "classifier": classifier is not None,
         },
     )
@@ -287,7 +294,11 @@ def main() -> None:
                     )
                 if classifier is None:
                     losses = model.compute_losses(
-                        out, lam=args.lambda_c, use_lc=args.lc, use_lr=args.lr_loss
+                        out,
+                        lam=args.lambda_c,
+                        use_lc=args.lc,
+                        use_lr=args.lr_loss,
+                        labels=labels if args.contrastive_targets == "class" else None,
                     )
                 else:
                     ce = F.cross_entropy(classifier(out.v_bar), labels)
