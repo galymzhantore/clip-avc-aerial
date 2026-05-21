@@ -117,6 +117,14 @@ def _score_cached(
     return visual @ class_text.T
 
 
+def _classifier_visual(model: CLIP_AVC, v: torch.Tensor, mode: str) -> torch.Tensor:
+    if mode == "refined":
+        return model.encode_visual_only_refined(v)
+    # Existing classifier checkpoints, and the paper's dense visual head, use
+    # visual features that do not require knowing the target class text.
+    return v.mean(dim=1)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=["era", "mod20"], required=True)
@@ -164,6 +172,8 @@ def main() -> None:
         classifier = nn.Linear(cfg.embed_dim, len(classes)).to(device)
         classifier.load_state_dict(ckpt["classifier"])
         classifier.eval()
+    train_config = ckpt.get("train_config", {}) or {}
+    classifier_feature = train_config.get("classifier_feature", "coarse")
 
     prompts = build_prompts(classes)
     toks = model.bert.tokenize(prompts, max_length=cfg.max_text_tokens)
@@ -213,7 +223,7 @@ def main() -> None:
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.amp):
                 v, _ = model.encode_visual(frames, swin_video)
                 if score_mode == "classifier":
-                    sims = classifier(v.mean(dim=1))
+                    sims = classifier(_classifier_visual(model, v, classifier_feature))
                 elif score_mode == "refined_pair":
                     sims = _score_with_context(model, v, text, args.amp)
                 else:

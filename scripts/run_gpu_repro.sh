@@ -26,6 +26,9 @@ CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
 SAVE_EVERY="${SAVE_EVERY:-10}"
 KEEP_CHECKPOINTS="${KEEP_CHECKPOINTS:-2}"
 CONTRASTIVE_TARGETS="${CONTRASTIVE_TARGETS:-instance}"
+CLASSIFIER_HEAD="${CLASSIFIER_HEAD:-1}"
+CE_WEIGHT="${CE_WEIGHT:-1.0}"
+CLASSIFIER_FEATURE="${CLASSIFIER_FEATURE:-coarse}"
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
@@ -57,7 +60,15 @@ common_train_args=(
   --save-every "$SAVE_EVERY"
   --keep-checkpoints "$KEEP_CHECKPOINTS"
   --contrastive-targets "$CONTRASTIVE_TARGETS"
+  --ce-weight "$CE_WEIGHT"
+  --classifier-feature "$CLASSIFIER_FEATURE"
 )
+
+if [[ "$CLASSIFIER_HEAD" == "1" ]]; then
+  common_train_args+=(--classifier-head)
+else
+  common_train_args+=(--no-classifier-head)
+fi
 
 common_eval_args=(
   --split test
@@ -177,6 +188,9 @@ Optional env overrides:
   SAVE_EVERY=$SAVE_EVERY
   KEEP_CHECKPOINTS=$KEEP_CHECKPOINTS
   CONTRASTIVE_TARGETS=$CONTRASTIVE_TARGETS
+  CLASSIFIER_HEAD=$CLASSIFIER_HEAD
+  CE_WEIGHT=$CE_WEIGHT
+  CLASSIFIER_FEATURE=$CLASSIFIER_FEATURE
 EOF
     exit 2
     ;;

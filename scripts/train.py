@@ -101,6 +101,16 @@ def _build_scheduler(args: argparse.Namespace, optim, steps_per_epoch: int):
     raise ValueError(args.scheduler)
 
 
+def _classifier_features(out: CLIP_AVC_Outputs, mode: str, use_context_transformer: bool) -> torch.Tensor:
+    if mode == "auto":
+        return out.v_hat if use_context_transformer else out.v_bar
+    if mode == "refined":
+        return out.v_hat
+    if mode == "coarse":
+        return out.v_bar
+    raise ValueError(mode)
+
+
 def _save_checkpoint(
     out_dir: Path,
     dataset: str,
@@ -168,6 +178,19 @@ def main() -> None:
     p.add_argument("--lc", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--lr-loss", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument(
+        "--classifier-head",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Train the dense classification head used for paper accuracy; contrastive losses remain auxiliary.",
+    )
+    p.add_argument("--ce-weight", type=float, default=1.0)
+    p.add_argument(
+        "--classifier-feature",
+        choices=["auto", "coarse", "refined"],
+        default="coarse",
+        help="Visual representation used by the dense classifier.",
+    )
+    p.add_argument(
         "--contrastive-targets",
         choices=["instance", "class"],
         default="instance",
@@ -208,8 +231,7 @@ def main() -> None:
     class_tokens = model.bert.tokenize(prompts, max_length=cfg.max_text_tokens)
     class_tokens = {k: v.to(device) for k, v in class_tokens.items()}
 
-    use_classifier = not args.lc and not args.lr_loss
-    classifier = nn.Linear(cfg.embed_dim, len(classes)).to(device) if use_classifier else None
+    classifier = nn.Linear(cfg.embed_dim, len(classes)).to(device) if args.classifier_head else None
     params = list(model.trainable_parameters())
     if classifier is not None:
         params += list(classifier.parameters())
@@ -247,6 +269,9 @@ def main() -> None:
             "context_transformer": args.context_transformer,
             "lc": args.lc,
             "lr_loss": args.lr_loss,
+            "classifier_head": args.classifier_head,
+            "ce_weight": args.ce_weight,
+            "classifier_feature": args.classifier_feature,
             "contrastive_targets": args.contrastive_targets,
             "classifier": classifier is not None,
         },
@@ -297,18 +322,22 @@ def main() -> None:
                         s_hat=torch.cat([c.s_hat for c in chunks], dim=0),
                         logit_scale=chunks[0].logit_scale,
                     )
-                if classifier is None:
-                    losses = model.compute_losses(
+                losses = model.compute_losses(
+                    out,
+                    lam=args.lambda_c,
+                    use_lc=args.lc,
+                    use_lr=args.lr_loss,
+                    labels=labels if args.contrastive_targets == "class" else None,
+                )
+                ce = out.v_bar.new_zeros(())
+                if classifier is not None:
+                    feats = _classifier_features(
                         out,
-                        lam=args.lambda_c,
-                        use_lc=args.lc,
-                        use_lr=args.lr_loss,
-                        labels=labels if args.contrastive_targets == "class" else None,
+                        args.classifier_feature,
+                        args.context_transformer,
                     )
-                else:
-                    ce = F.cross_entropy(classifier(out.v_bar), labels)
-                    losses = {"loss": ce, "L_r": ce.detach().new_zeros(()), "L_c": ce.detach().new_zeros(())}
-                loss = losses["loss"]
+                    ce = F.cross_entropy(classifier(feats), labels)
+                loss = args.ce_weight * ce + losses["loss"]
 
             scaler.scale(loss).backward()
             scaler.unscale_(optim)
@@ -322,6 +351,7 @@ def main() -> None:
             n_seen += labels.size(0)
             bar.set_postfix(
                 loss=f"{running/n_seen:.4f}",
+                CE=f"{ce.item():.4f}",
                 Lr=f"{losses['L_r'].item():.4f}",
                 Lc=f"{losses['L_c'].item():.4f}",
                 lr=f"{optim.param_groups[0]['lr']:.2e}",
@@ -339,6 +369,11 @@ def main() -> None:
                 "model": model.state_dict(),
                 "config": cfg.__dict__,
                 "data_config": {"resize_size": args.resize_size},
+                "train_config": {
+                    "classifier_head": args.classifier_head,
+                    "ce_weight": args.ce_weight,
+                    "classifier_feature": args.classifier_feature,
+                },
                 "epoch": epoch_num,
             }
             if classifier is not None:
