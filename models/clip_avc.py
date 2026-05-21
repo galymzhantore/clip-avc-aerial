@@ -6,6 +6,7 @@ from typing import NamedTuple
 
 import math
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from losses.info_nce import bidirectional_info_nce
@@ -28,6 +29,7 @@ class CLIP_AVC_Config:
     clip_model: str = "ViT-B/32"
     bert_model: str = "bert-base-uncased"
     text_encoder: str = "clip"
+    refined_text_pooling: str = "eos"
     freeze_clip_vit: bool = True
     freeze_video_swin_backbone: bool = False
     swin_weights: str | None = "KINETICS400_V1"  # set to None to skip pretrained download
@@ -45,9 +47,12 @@ class CLIP_AVC_Config:
         if self.n_frames is not None:
             self.clip_frames = self.n_frames
             self.swin_frames = self.n_frames
+        if self.refined_text_pooling not in {"eos", "mean"}:
+            raise ValueError(f"Unsupported refined_text_pooling={self.refined_text_pooling!r}")
 
 
 class CLIP_AVC_Outputs(NamedTuple):
+    v_seq: torch.Tensor        # (B, T, D) Cross-Transformer output sequence
     v_bar: torch.Tensor        # (B, D) coarse visual (mean over Cross-Transformer output)
     s_eos: torch.Tensor        # (B, D) coarse text   (BERT [SEP]/EOS projection)
     v_hat: torch.Tensor        # (B, D) refined visual (mean over Context-Enriched output)
@@ -141,18 +146,71 @@ class CLIP_AVC(nn.Module):
         else:
             v_seq, s_seq = v, text.tokens
         v_hat = v_seq.mean(dim=1)    # refined visual
-
-        # Refined text: mean over real (non-pad) text tokens.
-        mask = text.attention_mask.unsqueeze(-1).type_as(s_seq)  # (B, K, 1)
-        s_hat = (s_seq * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
+        s_hat = self._pool_text(s_seq, text.attention_mask, self.config.refined_text_pooling)
 
         return CLIP_AVC_Outputs(
+            v_seq=v,
             v_bar=v_bar,
             s_eos=s_eos,
             v_hat=v_hat,
             s_hat=s_hat,
             logit_scale=self.logit_scale.exp(),
         )
+
+    @staticmethod
+    def _pool_text(tokens: torch.Tensor, attention_mask: torch.Tensor, mode: str) -> torch.Tensor:
+        if mode == "mean":
+            mask = attention_mask.unsqueeze(-1).type_as(tokens)
+            return (tokens * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
+        if mode == "eos":
+            last_idx = attention_mask.sum(dim=1).long().clamp_min(1) - 1
+            batch_idx = torch.arange(tokens.size(0), device=tokens.device)
+            return tokens[batch_idx, last_idx]
+        raise ValueError(f"Unsupported refined_text_pooling={mode!r}")
+
+    def context_similarity_logits(
+        self,
+        v: torch.Tensor,
+        text_tokens: torch.Tensor,
+        text_attention_mask: torch.Tensor,
+        chunk_size: int = 0,
+    ) -> torch.Tensor:
+        """Score every video against every class prompt through C-Trans.
+
+        This matches the target-conditioned nature of the Context-Enriched
+        Transformer: each candidate class text is paired with the visual token
+        sequence before producing the class logit.
+        """
+        b, t, d = v.shape
+        n_classes, k = text_tokens.shape[:2]
+        flat_total = b * n_classes
+        chunk_size = chunk_size or flat_total
+        logits: list[torch.Tensor] = []
+        scale = self.logit_scale.exp().clamp(max=100.0)
+
+        for start in range(0, flat_total, chunk_size):
+            end = min(flat_total, start + chunk_size)
+            pair_idx = torch.arange(start, end, device=v.device)
+            video_idx = torch.div(pair_idx, n_classes, rounding_mode="floor")
+            class_idx = pair_idx.remainder(n_classes)
+            v_flat = v[video_idx]
+            s_flat = text_tokens[class_idx]
+            mask_flat = text_attention_mask[class_idx]
+
+            if self.config.use_context_transformer:
+                v_seq, s_seq = self.context(v_flat, s_flat, text_attention_mask=mask_flat)
+            else:
+                v_seq, s_seq = v_flat, s_flat
+            v_hat = F.normalize(v_seq.mean(dim=1), dim=-1)
+            s_hat = self._pool_text(
+                s_seq,
+                mask_flat,
+                self.config.refined_text_pooling,
+            )
+            s_hat = F.normalize(s_hat, dim=-1)
+            logits.append(scale * (v_hat * s_hat).sum(dim=-1))
+
+        return torch.cat(logits, dim=0).reshape(b, n_classes)
 
     # ------------------------------------------------------------------ losses
     def compute_losses(
@@ -187,8 +245,7 @@ class CLIP_AVC(nn.Module):
         b = input_ids.size(0)
         zero_v = torch.zeros(b, self.config.clip_frames, self.config.embed_dim, device=input_ids.device)
         _, s_seq = self.context(zero_v, text.tokens, text_attention_mask=text.attention_mask)
-        mask = text.attention_mask.unsqueeze(-1).type_as(s_seq)
-        return (s_seq * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
+        return self._pool_text(s_seq, text.attention_mask, self.config.refined_text_pooling)
 
     @torch.no_grad()
     def encode_visual_only_refined(self, v: torch.Tensor) -> torch.Tensor:

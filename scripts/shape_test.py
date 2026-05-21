@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--swin-frames", type=int, default=16)
     parser.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     parser.add_argument("--max-text-tokens", type=int, default=77)
+    parser.add_argument("--refined-text-pooling", choices=["eos", "mean"], default="eos")
     parser.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--freeze-video-swin-backbone", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--no-swin-pretrained", action="store_true",
@@ -31,6 +32,7 @@ def main() -> None:
         swin_weights=None if args.no_swin_pretrained else "KINETICS400_V1",
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
+        refined_text_pooling=args.refined_text_pooling,
         freeze_clip_vit=args.freeze_clip_vit,
         freeze_video_swin_backbone=args.freeze_video_swin_backbone,
     )

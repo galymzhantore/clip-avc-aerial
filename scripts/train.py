@@ -153,6 +153,12 @@ def main() -> None:
     p.add_argument("--resize-size", type=int, default=256, help="Resize short side before 224 crop.")
     p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     p.add_argument("--max-text-tokens", type=int, default=77)
+    p.add_argument(
+        "--refined-text-pooling",
+        choices=["eos", "mean"],
+        default="eos",
+        help="Pool C-Trans text output with the EOS token or mean over real tokens.",
+    )
     p.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--freeze-video-swin-backbone", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--seed", type=int, default=0)
@@ -185,7 +191,19 @@ def main() -> None:
         default=True,
         help="Train the dense classification head used for paper accuracy; contrastive losses remain auxiliary.",
     )
+    p.add_argument(
+        "--classifier-mode",
+        choices=["linear", "context"],
+        default="linear",
+        help="linear trains a dense head; context trains CE on target-conditioned C-Trans similarities.",
+    )
     p.add_argument("--ce-weight", type=float, default=1.0)
+    p.add_argument(
+        "--context-logit-chunk-size",
+        type=int,
+        default=0,
+        help="Chunk B*num_classes C-Trans pairs for --classifier-mode context. 0 = one chunk.",
+    )
     p.add_argument(
         "--classifier-feature",
         choices=["auto", "coarse", "refined"],
@@ -203,6 +221,8 @@ def main() -> None:
     clip_frames, swin_frames = _resolve_frame_args(args)
     if args.lr_loss and not args.context_transformer:
         p.error("--lr-loss requires --context-transformer because L_r is defined on refined features.")
+    if args.classifier_head and args.classifier_mode == "context" and not args.context_transformer:
+        p.error("--classifier-mode context requires --context-transformer.")
     _seed_everything(args.seed)
     device = torch.device("cuda")
 
@@ -214,6 +234,7 @@ def main() -> None:
         checkpoint_video_swin=args.checkpoint_video_swin,
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
+        refined_text_pooling=args.refined_text_pooling,
         freeze_clip_vit=args.freeze_clip_vit,
         freeze_video_swin_backbone=args.freeze_video_swin_backbone,
     )
@@ -235,7 +256,11 @@ def main() -> None:
     class_tokens = model.bert.tokenize(prompts, max_length=cfg.max_text_tokens)
     class_tokens = {k: v.to(device) for k, v in class_tokens.items()}
 
-    classifier = nn.Linear(cfg.embed_dim, len(classes)).to(device) if args.classifier_head else None
+    classifier = (
+        nn.Linear(cfg.embed_dim, len(classes)).to(device)
+        if args.classifier_head and args.classifier_mode == "linear"
+        else None
+    )
     params = list(model.trainable_parameters())
     if classifier is not None:
         params += list(classifier.parameters())
@@ -261,6 +286,7 @@ def main() -> None:
             "resize_size": args.resize_size,
             "text_encoder": args.text_encoder,
             "max_text_tokens": args.max_text_tokens,
+            "refined_text_pooling": args.refined_text_pooling,
             "freeze_clip_vit": args.freeze_clip_vit,
             "freeze_video_swin_backbone": args.freeze_video_swin_backbone,
             "batch_size": args.batch_size,
@@ -276,6 +302,7 @@ def main() -> None:
             "lc": args.lc,
             "lr_loss": args.lr_loss,
             "classifier_head": args.classifier_head,
+            "classifier_mode": args.classifier_mode,
             "ce_weight": args.ce_weight,
             "classifier_feature": args.classifier_feature,
             "contrastive_targets": args.contrastive_targets,
@@ -326,6 +353,7 @@ def main() -> None:
                         s_eos=torch.cat([c.s_eos for c in chunks], dim=0),
                         v_hat=torch.cat([c.v_hat for c in chunks], dim=0),
                         s_hat=torch.cat([c.s_hat for c in chunks], dim=0),
+                        v_seq=torch.cat([c.v_seq for c in chunks], dim=0),
                         logit_scale=chunks[0].logit_scale,
                     )
                 losses = model.compute_losses(
@@ -336,13 +364,27 @@ def main() -> None:
                     labels=labels if args.contrastive_targets == "class" else None,
                 )
                 ce = out.v_bar.new_zeros(())
-                if classifier is not None:
-                    feats = _classifier_features(
-                        out,
-                        args.classifier_feature,
-                        args.context_transformer,
-                    )
-                    ce = F.cross_entropy(classifier(feats), labels)
+                if args.classifier_head:
+                    if args.classifier_mode == "linear":
+                        feats = _classifier_features(
+                            out,
+                            args.classifier_feature,
+                            args.context_transformer,
+                        )
+                        ce = F.cross_entropy(classifier(feats), labels)
+                    else:
+                        class_text = model.encode_text(
+                            class_tokens["input_ids"],
+                            class_tokens["attention_mask"],
+                            class_tokens.get("token_type_ids"),
+                        )
+                        logits = model.context_similarity_logits(
+                            out.v_seq,
+                            class_text.tokens,
+                            class_text.attention_mask,
+                            chunk_size=args.context_logit_chunk_size,
+                        )
+                        ce = F.cross_entropy(logits, labels)
                 loss = args.ce_weight * ce + losses["loss"]
 
             scaler.scale(loss).backward()
@@ -377,8 +419,10 @@ def main() -> None:
                 "data_config": {"resize_size": args.resize_size},
                 "train_config": {
                     "classifier_head": args.classifier_head,
+                    "classifier_mode": args.classifier_mode,
                     "ce_weight": args.ce_weight,
                     "classifier_feature": args.classifier_feature,
+                    "context_logit_chunk_size": args.context_logit_chunk_size,
                 },
                 "epoch": epoch_num,
             }

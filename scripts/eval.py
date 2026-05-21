@@ -82,23 +82,8 @@ def _score_with_context(
     text,
     amp: bool,
 ) -> torch.Tensor:
-    b, t, d = v.shape
-    n_classes, k = text.tokens.shape[:2]
-    v_flat = v[:, None].expand(b, n_classes, t, d).reshape(b * n_classes, t, d)
-    s_flat = text.tokens[None].expand(b, n_classes, k, d).reshape(b * n_classes, k, d)
-    mask_flat = text.attention_mask[None].expand(b, n_classes, k).reshape(b * n_classes, k)
-
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=amp):
-        if model.config.use_context_transformer:
-            v_seq, s_seq = model.context(v_flat, s_flat, text_attention_mask=mask_flat)
-        else:
-            v_seq, s_seq = v_flat, s_flat
-        v_hat = F.normalize(v_seq.mean(dim=1), dim=-1)
-        mask = mask_flat.unsqueeze(-1).type_as(s_seq)
-        s_hat = (s_seq * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
-        s_hat = F.normalize(s_hat, dim=-1)
-        sims = (v_hat * s_hat).sum(dim=-1).reshape(b, n_classes)
-    return sims
+        return model.context_similarity_logits(v, text.tokens, text.attention_mask)
 
 
 def _score_cached(
@@ -174,6 +159,7 @@ def main() -> None:
         classifier.eval()
     train_config = ckpt.get("train_config", {}) or {}
     classifier_feature = train_config.get("classifier_feature", "coarse")
+    classifier_mode = train_config.get("classifier_mode", "linear")
 
     prompts = build_prompts(classes)
     toks = model.bert.tokenize(prompts, max_length=cfg.max_text_tokens)
@@ -196,7 +182,12 @@ def main() -> None:
 
     score_mode = args.score_mode
     if score_mode == "auto":
-        score_mode = "classifier" if classifier is not None else "refined_cached"
+        if classifier is not None:
+            score_mode = "classifier"
+        elif classifier_mode == "context":
+            score_mode = "refined_pair"
+        else:
+            score_mode = "refined_cached"
     if score_mode == "classifier" and classifier is None:
         raise ValueError("--score-mode classifier requested, but checkpoint has no classifier head.")
     print(f"score_mode: {score_mode}")
