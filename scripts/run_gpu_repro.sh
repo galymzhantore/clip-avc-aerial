@@ -23,6 +23,7 @@ RESIZE_SIZE="${RESIZE_SIZE:-256}"
 TEXT_ENCODER="${TEXT_ENCODER:-clip}"
 MAX_TEXT_TOKENS="${MAX_TEXT_TOKENS:-77}"
 FREEZE_CLIP_VIT="${FREEZE_CLIP_VIT:-1}"
+FREEZE_VIDEO_SWIN_BACKBONE="${FREEZE_VIDEO_SWIN_BACKBONE:-0}"
 CHECKPOINT_VIDEO_SWIN="${CHECKPOINT_VIDEO_SWIN:-1}"
 SAVE_EVERY="${SAVE_EVERY:-10}"
 KEEP_CHECKPOINTS="${KEEP_CHECKPOINTS:-2}"
@@ -71,6 +72,12 @@ else
   common_train_args+=(--no-freeze-clip-vit)
 fi
 
+if [[ "$FREEZE_VIDEO_SWIN_BACKBONE" == "1" ]]; then
+  common_train_args+=(--freeze-video-swin-backbone)
+else
+  common_train_args+=(--no-freeze-video-swin-backbone)
+fi
+
 if [[ "$CLASSIFIER_HEAD" == "1" ]]; then
   common_train_args+=(--classifier-head)
 else
@@ -93,6 +100,11 @@ shape_test() {
     freeze_args+=(--freeze-clip-vit)
   else
     freeze_args+=(--no-freeze-clip-vit)
+  fi
+  if [[ "$FREEZE_VIDEO_SWIN_BACKBONE" == "1" ]]; then
+    freeze_args+=(--freeze-video-swin-backbone)
+  else
+    freeze_args+=(--no-freeze-video-swin-backbone)
   fi
 
   "$UV_BIN" run python -m scripts.shape_test \
@@ -200,6 +212,7 @@ Optional env overrides:
   TEXT_ENCODER=$TEXT_ENCODER
   MAX_TEXT_TOKENS=$MAX_TEXT_TOKENS
   FREEZE_CLIP_VIT=$FREEZE_CLIP_VIT
+  FREEZE_VIDEO_SWIN_BACKBONE=$FREEZE_VIDEO_SWIN_BACKBONE
   CHECKPOINT_VIDEO_SWIN=$CHECKPOINT_VIDEO_SWIN
   SAVE_EVERY=$SAVE_EVERY
   KEEP_CHECKPOINTS=$KEEP_CHECKPOINTS

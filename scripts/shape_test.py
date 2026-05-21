@@ -20,6 +20,7 @@ def main() -> None:
     parser.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     parser.add_argument("--max-text-tokens", type=int, default=77)
     parser.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--freeze-video-swin-backbone", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--no-swin-pretrained", action="store_true",
                         help="Skip Kinetics-400 weight download (random init).")
     args = parser.parse_args()
@@ -31,6 +32,7 @@ def main() -> None:
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
         freeze_clip_vit=args.freeze_clip_vit,
+        freeze_video_swin_backbone=args.freeze_video_swin_backbone,
     )
     device = torch.device("cuda")
     model = CLIP_AVC(cfg).to(device)

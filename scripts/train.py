@@ -154,6 +154,7 @@ def main() -> None:
     p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     p.add_argument("--max-text-tokens", type=int, default=77)
     p.add_argument("--freeze-clip-vit", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--freeze-video-swin-backbone", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=Path("checkpoints"))
     p.add_argument(
@@ -214,6 +215,7 @@ def main() -> None:
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
         freeze_clip_vit=args.freeze_clip_vit,
+        freeze_video_swin_backbone=args.freeze_video_swin_backbone,
     )
     model = CLIP_AVC(cfg).to(device)
 
@@ -260,6 +262,7 @@ def main() -> None:
             "text_encoder": args.text_encoder,
             "max_text_tokens": args.max_text_tokens,
             "freeze_clip_vit": args.freeze_clip_vit,
+            "freeze_video_swin_backbone": args.freeze_video_swin_backbone,
             "batch_size": args.batch_size,
             "micro_batch_size": args.micro_batch_size or args.batch_size,
             "lr": args.lr,

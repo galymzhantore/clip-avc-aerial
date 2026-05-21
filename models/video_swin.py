@@ -20,6 +20,7 @@ class VideoSwinEncoder(nn.Module):
         pretrained: bool = True,
         weights: str = "KINETICS400_V1",
         gradient_checkpointing: bool = False,
+        freeze_backbone: bool = False,
     ):
         super().__init__()
         if pretrained:
@@ -34,6 +35,19 @@ class VideoSwinEncoder(nn.Module):
         self.out_channels: int = backbone.num_features  # 1024 for Swin-B
         self.projection = nn.Linear(self.out_channels, embed_dim)
         self.gradient_checkpointing = gradient_checkpointing
+        self.freeze_backbone = freeze_backbone
+        if self.freeze_backbone:
+            for module in (self.patch_embed, self.pos_drop, self.features, self.norm):
+                for p in module.parameters():
+                    p.requires_grad = False
+                module.eval()
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_backbone:
+            for module in (self.patch_embed, self.pos_drop, self.features, self.norm):
+                module.eval()
+        return self
 
     def _forward_impl(self, clip: torch.Tensor) -> torch.Tensor:
         # clip: (B, C, T_f, H, W)
@@ -47,6 +61,15 @@ class VideoSwinEncoder(nn.Module):
         return h
 
     def forward(self, clip: torch.Tensor) -> torch.Tensor:
+        if self.freeze_backbone:
+            with torch.no_grad():
+                h = self.patch_embed(clip)
+                h = self.pos_drop(h)
+                h = self.features(h)
+                h = self.norm(h)
+            b, t, hh, ww, c = h.shape
+            h = h.reshape(b, t * hh * ww, c)
+            return self.projection(h)
         if self.gradient_checkpointing and self.training:
             return checkpoint(self._forward_impl, clip, use_reentrant=False)
         return self._forward_impl(clip)

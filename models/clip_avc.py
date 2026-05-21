@@ -29,6 +29,7 @@ class CLIP_AVC_Config:
     bert_model: str = "bert-base-uncased"
     text_encoder: str = "clip"
     freeze_clip_vit: bool = True
+    freeze_video_swin_backbone: bool = False
     swin_weights: str | None = "KINETICS400_V1"  # set to None to skip pretrained download
     clip_frames: int = 8
     swin_frames: int = 16
@@ -72,6 +73,7 @@ class CLIP_AVC(nn.Module):
             pretrained=cfg.swin_weights is not None,
             weights=cfg.swin_weights or "KINETICS400_V1",
             gradient_checkpointing=cfg.checkpoint_video_swin,
+            freeze_backbone=cfg.freeze_video_swin_backbone,
         )
 
         self.temporal = TemporalTransformer(
