@@ -79,14 +79,16 @@ run_case() {
 run_case paper_vit_in 68.40 92.70 \
   VISUAL_PRETRAINING=imagenet \
   IMAGENET_VIT_MODEL=vit_b_32 \
-  TEXT_ENCODER=bert \
+  TEXT_ENCODER=clip \
+  CLIP_MODEL=ViT-B/32 \
   CROSS_TRANSFORMER=0 \
   CHECKPOINT_VIDEO_SWIN=0
 
 run_case paper_vit_swinb_in_k400 70.29 96.50 \
   VISUAL_PRETRAINING=imagenet \
   IMAGENET_VIT_MODEL=vit_b_32 \
-  TEXT_ENCODER=bert \
+  TEXT_ENCODER=clip \
+  CLIP_MODEL=ViT-B/32 \
   CROSS_TRANSFORMER=1
 
 run_case paper_vit_wit 80.91 97.20 \
