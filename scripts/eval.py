@@ -34,6 +34,7 @@ def _build_dataset(
     clip_frames: int,
     swin_frames: int,
     resize_size: int,
+    clip_normalization: str,
 ):
     common = dict(
         root=root,
@@ -41,6 +42,7 @@ def _build_dataset(
         clip_frames=clip_frames,
         swin_frames=swin_frames,
         resize_size=resize_size,
+        clip_normalization=clip_normalization,
         random_crop=False,
         horizontal_flip=False,
         color_jitter=False,
@@ -147,6 +149,10 @@ def main() -> None:
     data_config = ckpt.get("data_config", {}) or {}
     resize_size = args.resize_size or data_config.get("resize_size") or 256
     cfg = _config_from_checkpoint(saved, clip_frames, swin_frames, ckpt["model"])
+    clip_normalization = data_config.get(
+        "clip_normalization",
+        "imagenet" if cfg.visual_pretraining == "imagenet" else "clip",
+    )
     model = CLIP_AVC(cfg).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
@@ -192,7 +198,15 @@ def main() -> None:
         raise ValueError("--score-mode classifier requested, but checkpoint has no classifier head.")
     print(f"score_mode: {score_mode}")
 
-    ds = _build_dataset(args.dataset, args.data_root, args.split, clip_frames, swin_frames, resize_size)
+    ds = _build_dataset(
+        args.dataset,
+        args.data_root,
+        args.split,
+        clip_frames,
+        swin_frames,
+        resize_size,
+        clip_normalization,
+    )
     loader_kwargs = dict(
         batch_size=args.batch_size,
         shuffle=False,

@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from data import ERA_CLASSES, MOD20_CLASSES, collate_clip_batch, era_dataset, mod20_dataset
 from models.clip_avc import CLIP_AVC, CLIP_AVC_Config, CLIP_AVC_Outputs
+from models.clip_encoder import SUPPORTED_IMAGENET_VIT_MODELS, SUPPORTED_VISUAL_PRETRAINING
 from models.video_swin import SUPPORTED_VIDEO_MODELS
 from utils.prompts import build_prompts
 
@@ -37,6 +38,7 @@ def _build_dataset(
     clip_frames: int,
     swin_frames: int,
     resize_size: int,
+    visual_pretraining: str,
     color_jitter: bool = True,
 ):
     common = dict(
@@ -45,6 +47,7 @@ def _build_dataset(
         clip_frames=clip_frames,
         swin_frames=swin_frames,
         resize_size=resize_size,
+        clip_normalization="imagenet" if visual_pretraining == "imagenet" else "clip",
         color_jitter=color_jitter,
     )
     if name == "era":
@@ -152,7 +155,9 @@ def main() -> None:
     p.add_argument("--clip-frames", type=int, default=None, help="Paper default: 8.")
     p.add_argument("--swin-frames", type=int, default=None, help="Paper default: 16.")
     p.add_argument("--resize-size", type=int, default=256, help="Resize short side before 224 crop.")
+    p.add_argument("--visual-pretraining", choices=SUPPORTED_VISUAL_PRETRAINING, default="wit")
     p.add_argument("--clip-model", type=str, default="ViT-B/32")
+    p.add_argument("--imagenet-vit-model", choices=SUPPORTED_IMAGENET_VIT_MODELS, default="vit_b_32")
     p.add_argument("--text-encoder", choices=["clip", "bert"], default="clip")
     p.add_argument("--max-text-tokens", type=int, default=77)
     p.add_argument(
@@ -235,7 +240,9 @@ def main() -> None:
         use_cross_transformer=args.cross_transformer,
         use_context_transformer=args.context_transformer,
         checkpoint_video_swin=args.checkpoint_video_swin,
+        visual_pretraining=args.visual_pretraining,
         clip_model=args.clip_model,
+        imagenet_vit_model=args.imagenet_vit_model,
         text_encoder=args.text_encoder,
         max_text_tokens=args.max_text_tokens,
         refined_text_pooling=args.refined_text_pooling,
@@ -252,6 +259,7 @@ def main() -> None:
         clip_frames,
         swin_frames,
         args.resize_size,
+        args.visual_pretraining,
         color_jitter=args.color_jitter,
     )
     train_loader = DataLoader(train_ds, **_loader_kwargs(args))
@@ -289,7 +297,9 @@ def main() -> None:
             "clip_frames": clip_frames,
             "swin_frames": swin_frames,
             "resize_size": args.resize_size,
+            "visual_pretraining": args.visual_pretraining,
             "clip_model": args.clip_model,
+            "imagenet_vit_model": args.imagenet_vit_model,
             "text_encoder": args.text_encoder,
             "max_text_tokens": args.max_text_tokens,
             "refined_text_pooling": args.refined_text_pooling,
@@ -423,7 +433,10 @@ def main() -> None:
             payload = {
                 "model": model.state_dict(),
                 "config": cfg.__dict__,
-                "data_config": {"resize_size": args.resize_size},
+                "data_config": {
+                    "resize_size": args.resize_size,
+                    "clip_normalization": "imagenet" if args.visual_pretraining == "imagenet" else "clip",
+                },
                 "train_config": {
                     "classifier_head": args.classifier_head,
                     "classifier_mode": args.classifier_mode,

@@ -10,7 +10,12 @@ import torch.nn.functional as F
 from torch import nn
 
 from losses.info_nce import bidirectional_info_nce
-from models.clip_encoder import CLIPViTEncoder
+from models.clip_encoder import (
+    CLIPViTEncoder,
+    ImageNetViTEncoder,
+    SUPPORTED_IMAGENET_VIT_MODELS,
+    SUPPORTED_VISUAL_PRETRAINING,
+)
 from models.context_enriched import ContextEnrichedTransformer
 from models.cross_transformer import CrossTransformer
 from models.temporal_transformer import TemporalTransformer
@@ -26,7 +31,9 @@ class CLIP_AVC_Config:
     cross_layers: int = 2
     context_layers: int = 2
     dropout: float = 0.0
+    visual_pretraining: str = "wit"
     clip_model: str = "ViT-B/32"
+    imagenet_vit_model: str = "vit_b_32"
     bert_model: str = "bert-base-uncased"
     text_encoder: str = "clip"
     refined_text_pooling: str = "eos"
@@ -50,6 +57,16 @@ class CLIP_AVC_Config:
             self.swin_frames = self.n_frames
         if self.refined_text_pooling not in {"eos", "mean"}:
             raise ValueError(f"Unsupported refined_text_pooling={self.refined_text_pooling!r}")
+        if self.visual_pretraining not in SUPPORTED_VISUAL_PRETRAINING:
+            raise ValueError(
+                f"Unsupported visual_pretraining={self.visual_pretraining!r}; "
+                f"choose one of {SUPPORTED_VISUAL_PRETRAINING!r}."
+            )
+        if self.imagenet_vit_model not in SUPPORTED_IMAGENET_VIT_MODELS:
+            raise ValueError(
+                f"Unsupported imagenet_vit_model={self.imagenet_vit_model!r}; "
+                f"choose one of {SUPPORTED_IMAGENET_VIT_MODELS!r}."
+            )
         if self.video_model not in SUPPORTED_VIDEO_MODELS:
             raise ValueError(
                 f"Unsupported video_model={self.video_model!r}; "
@@ -72,7 +89,14 @@ class CLIP_AVC(nn.Module):
         self.config = config or CLIP_AVC_Config()
         cfg = self.config
 
-        self.clip_vit = CLIPViTEncoder(model_name=cfg.clip_model, trainable=not cfg.freeze_clip_vit)
+        if cfg.visual_pretraining == "wit":
+            self.clip_vit = CLIPViTEncoder(model_name=cfg.clip_model, trainable=not cfg.freeze_clip_vit)
+        else:
+            self.clip_vit = ImageNetViTEncoder(
+                model_name=cfg.imagenet_vit_model,
+                embed_dim=cfg.embed_dim,
+                trainable=not cfg.freeze_clip_vit,
+            )
         if self.clip_vit.embed_dim != cfg.embed_dim:
             raise ValueError(
                 f"{cfg.clip_model} visual output dim is {self.clip_vit.embed_dim}, "
@@ -85,14 +109,17 @@ class CLIP_AVC(nn.Module):
             self.bert = BERTTextEncoder(model_name=cfg.bert_model, embed_dim=cfg.embed_dim)
         else:
             raise ValueError(f"Unsupported text_encoder={cfg.text_encoder!r}")
-        self.video_swin = VideoSwinEncoder(
-            embed_dim=cfg.embed_dim,
-            model_name=cfg.video_model,
-            pretrained=cfg.swin_weights is not None,
-            weights=cfg.swin_weights or "KINETICS400_V1",
-            gradient_checkpointing=cfg.checkpoint_video_swin,
-            freeze_backbone=cfg.freeze_video_swin_backbone,
-        )
+        if cfg.use_cross_transformer:
+            self.video_swin = VideoSwinEncoder(
+                embed_dim=cfg.embed_dim,
+                model_name=cfg.video_model,
+                pretrained=cfg.swin_weights is not None,
+                weights=cfg.swin_weights or "KINETICS400_V1",
+                gradient_checkpointing=cfg.checkpoint_video_swin,
+                freeze_backbone=cfg.freeze_video_swin_backbone,
+            )
+        else:
+            self.video_swin = None
 
         self.temporal = TemporalTransformer(
             d_model=cfg.embed_dim,
@@ -101,11 +128,15 @@ class CLIP_AVC(nn.Module):
             max_frames=max(cfg.clip_frames, 32),
             dropout=cfg.dropout,
         )
-        self.cross = CrossTransformer(
-            d_model=cfg.embed_dim,
-            n_layers=cfg.cross_layers,
-            n_heads=cfg.n_heads,
-            dropout=cfg.dropout,
+        self.cross = (
+            CrossTransformer(
+                d_model=cfg.embed_dim,
+                n_layers=cfg.cross_layers,
+                n_heads=cfg.n_heads,
+                dropout=cfg.dropout,
+            )
+            if cfg.use_cross_transformer
+            else None
         )
         self.context = ContextEnrichedTransformer(
             d_model=cfg.embed_dim,
@@ -125,6 +156,7 @@ class CLIP_AVC(nn.Module):
         u = self.clip_vit(frames)        # (B, T, D)
         u_tilde = self.temporal(u)       # (B, T, D)
         if self.config.use_cross_transformer:
+            assert self.video_swin is not None and self.cross is not None
             w = self.video_swin(clip_video)  # (B, T'*H'*W', D)
             v = self.cross(u_tilde, w)       # (B, T, D)
         else:

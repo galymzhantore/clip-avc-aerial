@@ -20,7 +20,9 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-0.2}"
 CLIP_FRAMES="${CLIP_FRAMES:-8}"
 SWIN_FRAMES="${SWIN_FRAMES:-16}"
 RESIZE_SIZE="${RESIZE_SIZE:-256}"
+VISUAL_PRETRAINING="${VISUAL_PRETRAINING:-wit}"
 CLIP_MODEL="${CLIP_MODEL:-ViT-B/32}"
+IMAGENET_VIT_MODEL="${IMAGENET_VIT_MODEL:-vit_b_32}"
 TEXT_ENCODER="${TEXT_ENCODER:-clip}"
 MAX_TEXT_TOKENS="${MAX_TEXT_TOKENS:-77}"
 REFINED_TEXT_POOLING="${REFINED_TEXT_POOLING:-eos}"
@@ -32,6 +34,8 @@ SAVE_EVERY="${SAVE_EVERY:-10}"
 KEEP_CHECKPOINTS="${KEEP_CHECKPOINTS:-2}"
 CONTRASTIVE_TARGETS="${CONTRASTIVE_TARGETS:-instance}"
 CLASSIFIER_HEAD="${CLASSIFIER_HEAD:-1}"
+CROSS_TRANSFORMER="${CROSS_TRANSFORMER:-1}"
+CONTEXT_TRANSFORMER="${CONTEXT_TRANSFORMER:-1}"
 CLASSIFIER_MODE="${CLASSIFIER_MODE:-linear}"
 CE_WEIGHT="${CE_WEIGHT:-1.0}"
 CLASSIFIER_FEATURE="${CLASSIFIER_FEATURE:-coarse}"
@@ -57,7 +61,9 @@ common_train_args=(
   --clip-frames "$CLIP_FRAMES"
   --swin-frames "$SWIN_FRAMES"
   --resize-size "$RESIZE_SIZE"
+  --visual-pretraining "$VISUAL_PRETRAINING"
   --clip-model "$CLIP_MODEL"
+  --imagenet-vit-model "$IMAGENET_VIT_MODEL"
   --text-encoder "$TEXT_ENCODER"
   --max-text-tokens "$MAX_TEXT_TOKENS"
   --refined-text-pooling "$REFINED_TEXT_POOLING"
@@ -94,6 +100,18 @@ else
   common_train_args+=(--no-classifier-head)
 fi
 
+if [[ "$CROSS_TRANSFORMER" == "1" ]]; then
+  common_train_args+=(--cross-transformer)
+else
+  common_train_args+=(--no-cross-transformer)
+fi
+
+if [[ "$CONTEXT_TRANSFORMER" == "1" ]]; then
+  common_train_args+=(--context-transformer)
+else
+  common_train_args+=(--no-context-transformer)
+fi
+
 common_eval_args=(
   --split test
   --batch-size "$EVAL_BATCH_SIZE"
@@ -106,6 +124,7 @@ common_eval_args=(
 
 shape_test() {
   local freeze_args=()
+  local cross_args=()
   if [[ "$FREEZE_CLIP_VIT" == "1" ]]; then
     freeze_args+=(--freeze-clip-vit)
   else
@@ -116,16 +135,24 @@ shape_test() {
   else
     freeze_args+=(--no-freeze-video-swin-backbone)
   fi
+  if [[ "$CROSS_TRANSFORMER" == "1" ]]; then
+    cross_args+=(--cross-transformer)
+  else
+    cross_args+=(--no-cross-transformer)
+  fi
 
   "$UV_BIN" run python -m scripts.shape_test \
     --batch 1 \
     --clip-frames "$CLIP_FRAMES" \
     --swin-frames "$SWIN_FRAMES" \
+    --visual-pretraining "$VISUAL_PRETRAINING" \
     --clip-model "$CLIP_MODEL" \
+    --imagenet-vit-model "$IMAGENET_VIT_MODEL" \
     --text-encoder "$TEXT_ENCODER" \
     --max-text-tokens "$MAX_TEXT_TOKENS" \
     --refined-text-pooling "$REFINED_TEXT_POOLING" \
     --video-model "$VIDEO_MODEL" \
+    "${cross_args[@]}" \
     "${freeze_args[@]}" \
     2>&1 | tee "$LOG_DIR/shape_test.log"
 }
@@ -222,7 +249,9 @@ Optional env overrides:
   EVAL_BATCH_SIZE=$EVAL_BATCH_SIZE
   WORKERS=$WORKERS
   RESIZE_SIZE=$RESIZE_SIZE
+  VISUAL_PRETRAINING=$VISUAL_PRETRAINING
   CLIP_MODEL=$CLIP_MODEL
+  IMAGENET_VIT_MODEL=$IMAGENET_VIT_MODEL
   TEXT_ENCODER=$TEXT_ENCODER
   MAX_TEXT_TOKENS=$MAX_TEXT_TOKENS
   REFINED_TEXT_POOLING=$REFINED_TEXT_POOLING
@@ -234,6 +263,8 @@ Optional env overrides:
   KEEP_CHECKPOINTS=$KEEP_CHECKPOINTS
   CONTRASTIVE_TARGETS=$CONTRASTIVE_TARGETS
   CLASSIFIER_HEAD=$CLASSIFIER_HEAD
+  CROSS_TRANSFORMER=$CROSS_TRANSFORMER
+  CONTEXT_TRANSFORMER=$CONTEXT_TRANSFORMER
   CLASSIFIER_MODE=$CLASSIFIER_MODE
   CE_WEIGHT=$CE_WEIGHT
   CLASSIFIER_FEATURE=$CLASSIFIER_FEATURE

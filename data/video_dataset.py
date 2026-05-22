@@ -29,9 +29,10 @@ import torch
 from decord import VideoReader, cpu
 from torch.utils.data import Dataset
 
-from models.clip_encoder import CLIPViTEncoder
+from models.clip_encoder import CLIPViTEncoder, ImageNetViTEncoder
 
 CLIP_MEAN, CLIP_STD = CLIPViTEncoder.normalize_mean_std()
+IMAGENET_MEAN, IMAGENET_STD = ImageNetViTEncoder.normalize_mean_std()
 # Torchvision's Swin3D_B_Weights.KINETICS400_V1 preprocessing uses ImageNet
 # normalization after resizing the short side to 256 and cropping to 224.
 SWIN_MEAN = (0.485, 0.456, 0.406)
@@ -74,6 +75,7 @@ class VideoClipDataset(Dataset):
         random_crop: bool = True,
         horizontal_flip: bool = True,
         color_jitter: bool = True,
+        clip_normalization: str = "clip",
     ):
         self.root = Path(root) / split
         self.classes = list(classes)
@@ -87,6 +89,12 @@ class VideoClipDataset(Dataset):
         self.random_crop = random_crop and split == "train"
         self.horizontal_flip = horizontal_flip and split == "train"
         self.color_jitter = color_jitter and split == "train"
+        if clip_normalization == "clip":
+            self.clip_mean, self.clip_std = CLIP_MEAN, CLIP_STD
+        elif clip_normalization == "imagenet":
+            self.clip_mean, self.clip_std = IMAGENET_MEAN, IMAGENET_STD
+        else:
+            raise ValueError("clip_normalization must be 'clip' or 'imagenet'")
         self.samples = _scan_split(self.root, self.classes)
         if not self.samples:
             raise FileNotFoundError(
@@ -170,7 +178,7 @@ class VideoClipDataset(Dataset):
         x = self._augment(frames)  # (T_clip + T_swin, 3, H, W)
         clip_x = x[: self.clip_frames]
         swin_x = x[self.clip_frames :]
-        clip_frames = self._normalize(clip_x, CLIP_MEAN, CLIP_STD)    # (T_clip, 3, H, W)
+        clip_frames = self._normalize(clip_x, self.clip_mean, self.clip_std)  # (T_clip, 3, H, W)
         swin_video = self._normalize(swin_x, SWIN_MEAN, SWIN_STD)     # (T_swin, 3, H, W)
         swin_video = swin_video.permute(1, 0, 2, 3).contiguous()      # (3, T_swin, H, W)
         return {

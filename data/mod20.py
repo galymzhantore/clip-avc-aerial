@@ -41,6 +41,7 @@ def mod20_dataset(
     random_crop: bool = True,
     horizontal_flip: bool = True,
     color_jitter: bool = True,
+    clip_normalization: str = "clip",
 ) -> VideoClipDataset:
     return VideoClipDataset(
         root=root,
@@ -54,4 +55,5 @@ def mod20_dataset(
         random_crop=random_crop,
         horizontal_flip=horizontal_flip,
         color_jitter=color_jitter,
+        clip_normalization=clip_normalization,
     )
